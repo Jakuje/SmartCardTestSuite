@@ -1,5 +1,4 @@
 #include "test_helpers.h"
-#include "common.h"
 
 int open_session(token_info *info) {
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
@@ -36,7 +35,7 @@ int clear_token() {
     return 0;
 }
 
-int init_token_with_default_pin(const token_info *info) {
+int init_token_with_default_pin(token_info *info) {
 
     CK_UTF8CHAR so_pin[] = {"00000000"};
     CK_UTF8CHAR new_pin[] = {"12345"};
@@ -108,6 +107,12 @@ int clear_token_without_login_setup(void **state) {
         fail_msg("Could not clear token!\n");
 
     token_info *info = (token_info *) *state;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_RV rv;
+
+    if(initialize_cryptoki(info)) {
+        fail_msg("CRYPTOKI couldn't be initialized\n");
+    }
 
     if(open_session(info))
         fail_msg("Could not open session to token!\n");
@@ -123,6 +128,10 @@ int clear_token_with_user_login_setup(void **state) {
 
     if(clear_token())
         fail_msg("Could not clear token!\n");
+
+    if(initialize_cryptoki(info)) {
+        fail_msg("CRYPTOKI couldn't be initialized\n");
+    }
 
     if(open_session(info))
         fail_msg("Could not open session to token!\n");
@@ -152,9 +161,10 @@ int after_test_cleanup(void **state) {
     info->session_handle = 0;
     debug_print("Closing all sessions");
     function_pointer->C_CloseAllSessions(info->slot_id);
+    function_pointer->C_Finalize(NULL_PTR);
 
-    if(clear_token())
-        fail_msg("Could not clear token!\n");
+//    if(clear_token())
+//        fail_msg("Could not clear token!\n");
 }
 
 CK_BYTE* hex_string_to_byte_array(char* hex_string) {
@@ -242,5 +252,25 @@ int long_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism, 
 
     fclose(fs);
     debug_print("Hash of message in file '%s'\n\t has length %d", LONG_MESSAGE_TO_HASH_PATH, (*hash_length));
+    return 0;
+}
+
+int initialize_cryptoki(token_info *info) {
+
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_RV rv;
+
+    rv = function_pointer->C_Initialize(NULL_PTR);
+    if(rv != CKR_OK){
+        fprintf(stderr,"Could not initialize CRYPTOKI!\n");
+        return 1;
+    }
+
+    if(get_slot_with_card(info)) {
+        function_pointer->C_Finalize(NULL_PTR);
+        fprintf(stderr,"There is no card present in reader.\n");
+        return 1;
+    }
+
     return 0;
 }

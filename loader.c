@@ -30,11 +30,20 @@ int load_pkcs11_module(token_info* info, const char* path_to_pkcs11_library) {
         return 1;
     }
 
-    if(get_slot_with_card(info)) {
-        fprintf(stderr, "There is no card present in reader.\n");
+    rv = info->function_pointer->C_Initialize(NULL_PTR);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_Initialize: Error = 0x%.8X\n", rv);
         return 1;
     }
 
+    if(get_slot_with_card(info)) {
+        fprintf(stderr, "There is no card present in reader.\n");
+        info->function_pointer->C_Finalize(NULL_PTR);
+        return 1;
+    }
+
+    info->function_pointer->C_Finalize(NULL_PTR);
     return 0;
 }
 
@@ -48,12 +57,12 @@ int get_slot_with_card(token_info* info)
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
-    rv = function_pointer->C_Initialize(NULL_PTR);
-
-    if (rv != CKR_OK) {
-        fprintf(stderr, "C_Initialize: Error = 0x%.8X\n", rv);
-        return 1;
-    }
+//    rv = function_pointer->C_Initialize(NULL_PTR);
+//
+//    if (rv != CKR_OK) {
+//        fprintf(stderr, "C_Initialize: Error = 0x%.8X\n", rv);
+//        return 1;
+//    }
 
     /* Get slot list for memory allocation */
     rv = function_pointer->C_GetSlotList(0, NULL_PTR, &slot_count);
@@ -95,6 +104,7 @@ int get_slot_with_card(token_info* info)
     if (slot_list) {
         free(slot_list);
     }
+
     return error;
 }
 

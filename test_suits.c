@@ -76,6 +76,11 @@ static void get_all_mechanisms_test(void **state) {
     CK_MECHANISM_TYPE_PTR mechanism_list;
 
 
+    if(initialize_cryptoki(info)) {
+        fail_msg("CRYPTOKI couldn't be initialized\n");
+    }
+
+
     rv = function_pointer->C_GetMechanismList(info->slot_id, NULL_PTR, &mechanism_count);
     assert_int_not_equal(mechanism_count,0);
     if ((rv == CKR_OK) && (mechanism_count > 0)) {
@@ -83,6 +88,7 @@ static void get_all_mechanisms_test(void **state) {
         rv = function_pointer->C_GetMechanismList(info->slot_id, mechanism_list, &mechanism_count);
         if (rv != CKR_OK) {
             free(mechanism_list);
+            function_pointer->C_Finalize(NULL_PTR);
             fail_msg("Could not get mechanism list!\n");
         }
         assert_non_null(mechanism_list);
@@ -104,7 +110,12 @@ static void get_all_mechanisms_test(void **state) {
         info->supported = supported;
     }
 
+    rv = function_pointer->C_Finalize(NULL_PTR);
+    if(rv != CKR_OK){
+        fail_msg("Could not finalize CRYPTOKI!\n");
+    }
 }
+
 
 static void create_hash_md5_short_message_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -203,11 +214,11 @@ int main(int argc, char** argv) {
 
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
-//            cmocka_unit_test(is_ec_supported_test),
-//            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test(is_ec_supported_test),
+            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(create_hash_sha1_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(create_hash_sha1_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
 

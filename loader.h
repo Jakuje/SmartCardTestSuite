@@ -42,6 +42,8 @@ static void *pkcs11_so;
 void get_supported_mechanisms(supported_mechanisms *supported, CK_MECHANISM_INFO mechanism_info,
                               CK_MECHANISM_TYPE mechanism_type);
 int load_pkcs11_module(token_info* info, const char* path_to_pkcs11_library);
+int get_slot_with_card(token_info* info);
 void close_pkcs11_module();
+
 
 #endif //SMARTCARDTESTSUIT_LOADER_H
