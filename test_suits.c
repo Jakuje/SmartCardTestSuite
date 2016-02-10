@@ -1,4 +1,5 @@
 #include "test_suits.h"
+#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -201,6 +202,207 @@ static void create_hash_sha1_long_message_test(void **state) {
     free(message_expected_hash);
 }
 
+static void generate_rsa_key_pair_no_key_generated_test(void **state) {
+    token_info *info = (token_info *) *state;
+
+    if(!CHECK_GENERATE_KEY_PAIR(info->supported.flags))
+        skip();
+
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_OBJECT_HANDLE private_key = CK_INVALID_HANDLE, public_key = CK_INVALID_HANDLE;
+    CK_MECHANISM gen_key_pair_mech = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL_PTR, 0};
+
+    CK_KEY_TYPE key_type = CKK_DES;
+
+    /* Set public key. */
+    CK_ATTRIBUTE public_key_template[] = {
+            {CKA_KEY_TYPE, &key_type, sizeof(key_type)},
+    };
+
+    /* Set private key. */
+    CK_ATTRIBUTE private_key_template[] = {
+            {CKA_KEY_TYPE, &key_type, sizeof(key_type)},
+    };
+
+    debug_print("Generating key pair....");
+
+    /* Generate Key pair for signing/verifying */
+    function_pointer->C_GenerateKeyPair(info->session_handle, &gen_key_pair_mech, public_key_template,
+                                          (sizeof (public_key_template) / sizeof (CK_ATTRIBUTE)),
+                                          private_key_template,
+                                          (sizeof (private_key_template) / sizeof (CK_ATTRIBUTE)),
+                                          &public_key, &private_key);
+
+    if(public_key != CK_INVALID_HANDLE && private_key != CK_INVALID_HANDLE)
+        fail_msg("No key should be generated!\n");
+
+}
+
+int find_object_by_template(const token_info* info, CK_ATTRIBUTE *template, CK_OBJECT_HANDLE *object, CK_LONG attributes_count){
+    CK_RV rv;
+    CK_ULONG object_count;
+
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    rv = function_pointer->C_FindObjectsInit(info->session_handle, template, attributes_count);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
+        return 1;
+    }
+
+    rv = function_pointer->C_FindObjects(info->session_handle, object, attributes_count, &object_count);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
+        return 1;
+    }
+
+    rv = function_pointer->C_FindObjectsFinal(info->session_handle);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
+        return 1;
+    }
+
+    return 0;
+}
+
+
+static void generate_rsa_key_pair_test(void **state) {
+    token_info *info = (token_info *) *state;
+
+    if(!CHECK_GENERATE_KEY_PAIR(info->supported.flags))
+        skip();
+
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_OBJECT_HANDLE private_key = CK_INVALID_HANDLE, public_key = CK_INVALID_HANDLE;
+    CK_MECHANISM gen_key_pair_mech = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL_PTR, 0};
+
+    CK_BBOOL true_value = TRUE;
+    CK_ULONG modulus_bits = 1024;
+    CK_BYTE public_exponent[] = { 11 };
+    CK_UTF8CHAR public_key_label[] = "My Public Key";
+    CK_UTF8CHAR private_key_label[] = "My Private Key";
+    CK_BYTE id[] = { 0xa1 };
+
+    /* Set public key. */
+    CK_ATTRIBUTE public_key_template[] = {
+            {CKA_ID, id, sizeof(id)},
+            {CKA_LABEL, public_key_label, sizeof(public_key_label)-1},
+            {CKA_VERIFY, &true_value, sizeof (true_value)},
+            {CKA_ENCRYPT, &true_value, sizeof (true_value)},
+            {CKA_TOKEN, &true_value, sizeof (true_value)},
+            {CKA_MODULUS_BITS, &modulus_bits, sizeof (modulus_bits)},
+            {CKA_PUBLIC_EXPONENT, public_exponent, sizeof (public_exponent)}
+    };
+
+    /* Set private key. */
+    CK_ATTRIBUTE private_key_template[] = {
+            {CKA_ID, id, sizeof(id)},
+            {CKA_LABEL, private_key_label, sizeof(private_key_label)-1},
+            {CKA_SIGN, &true_value, sizeof (true_value)},
+            {CKA_DECRYPT, &true_value, sizeof (true_value)},
+            {CKA_TOKEN, &true_value, sizeof (true_value)},
+            {CKA_SENSITIVE, &true_value, sizeof (true_value)},
+            {CKA_EXTRACTABLE, &true_value, sizeof (true_value)}
+    };
+
+    debug_print("Generating key pair....");
+
+    CK_RV rv;
+    /* Generate Key pair for signing/verifying */
+    rv = function_pointer->C_GenerateKeyPair(info->session_handle, &gen_key_pair_mech, public_key_template,
+                                        (sizeof (public_key_template) / sizeof (CK_ATTRIBUTE)),
+                                        private_key_template,
+                                        (sizeof (private_key_template) / sizeof (CK_ATTRIBUTE)),
+                                        &public_key, &private_key);
+
+    /* Testing if keys are created on token */
+    debug_print("Testing if keys are created on token");
+    if(rv != CKR_OK)
+        fail_msg("Key pair generation failed\n");
+
+    CK_OBJECT_HANDLE stored_private_key, stored_public_key;
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE template[] = {
+            { CKA_CLASS, &keyClass, sizeof(keyClass) },
+            { CKA_ID, id, sizeof(id) },
+    };
+
+    if(find_object_by_template(info, template, &stored_private_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find private key.");
+    }
+
+    assert_int_equal(private_key, stored_private_key);
+
+    keyClass = CKO_PUBLIC_KEY;
+    template[0].pValue = &keyClass;
+    template[0].ulValueLen = sizeof(keyClass);
+
+    if(find_object_by_template(info, template, &stored_public_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find public key.");
+    }
+
+    assert_int_equal(public_key, stored_public_key);
+    debug_print("Keys were successfully created on token");
+
+
+    /* Test if key attributes are correct */
+    debug_print("\nTest if key attributes are correct ");
+    CK_ULONG template_size;
+
+    /* Create sample message. */
+    CK_ATTRIBUTE get_attributes[] = {
+            {CKA_MODULUS_BITS, NULL_PTR, 0},
+    };
+
+    template_size = sizeof (get_attributes) / sizeof (CK_ATTRIBUTE);
+
+    rv = function_pointer->C_GetAttributeValue(info->session_handle, public_key, get_attributes,
+                                            template_size);
+
+    if (rv != CKR_OK) {
+        fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+    }
+
+    /* Allocate memory to hold the data we want */
+    for (int i = 0; i < template_size; i++) {
+        get_attributes[i].pValue = malloc (get_attributes[i].ulValueLen * sizeof(CK_VOID_PTR));
+
+        if (get_attributes[i].pValue == NULL) {
+            for (int j = 0; j < i; j++)
+                free(get_attributes[j].pValue);
+        }
+    }
+
+    /* Call again to get actual attributes */
+    rv = function_pointer->C_GetAttributeValue(info->session_handle, public_key, get_attributes,
+                                            template_size);
+
+    if (rv != CKR_OK) {
+        for (int j = 0; j < template_size; j++)
+            free(get_attributes[j].pValue);
+        fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+    }
+
+    /* Display public key values */
+    debug_print("Comparing modulus bits");
+    if(modulus_bits != *((CK_ULONG_PTR)(get_attributes[0].pValue))) {
+        for (int j = 0; j < template_size; j++)
+            free(get_attributes[j].pValue);
+
+        fail_msg("Stored modulus bits are different from input value\n");
+    }
+
+    debug_print("All attributes were correctly stored on token");
+
+    for (int i = 0; i < template_size; i++) {
+        free(get_attributes[i].pValue);
+    }
+}
+
+
 int main(int argc, char** argv) {
 
     if (argc != 2) {
@@ -215,12 +417,20 @@ int main(int argc, char** argv) {
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
             cmocka_unit_test(is_ec_supported_test),
+
+            /* User PIN tests */
             cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Message digest tests */
             cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(create_hash_sha1_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(create_hash_sha1_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Key generation tests */
+            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_no_key_generated_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_test, clear_token_with_user_login_setup, after_test_cleanup),
 
     };
 
