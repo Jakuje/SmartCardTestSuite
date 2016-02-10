@@ -24,6 +24,10 @@
 #define LONG_MESSAGE_TO_HASH_PATH "/home/mstrharsky/diplomka/resources/message_to_hash.txt"
 //#define LONG_MESSAGE_TO_HASH_PATH "/home/mstrharsky/diplomka/resources/short.txt"
 
+#define SHORT_MESSAGE_TO_SIGN "Simple message for signing & verifying.\n"
+#define SHORT_MESSAGE_SIGNATURE "/home/mstrharsky/diplomka/resources/message_to_sign.signature"
+
+
 typedef struct {
     CK_FLAGS flags;
 } supported_mechanisms;

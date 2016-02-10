@@ -35,6 +35,35 @@ int clear_token() {
     return 0;
 }
 
+int import_keys() {
+    debug_print("Importing private key");
+
+    int error = system("pkcs11-tool -l --pin 12345 --write-object /home/mstrharsky/diplomka/resources/private_key.key --type privkey --id a1 --label \"My Private Key\" --usage-sign --usage-decrypt");
+
+    if(error) {
+        fprintf(stderr,"Could not import private key!\n");
+        return error;
+    }
+
+    debug_print("Importing public key");
+    error = system("pkcs11-tool -l --pin 12345 --write-object /home/mstrharsky/diplomka/resources/public_key.key --type pubkey --id a1 --label \"My Public Key\" --usage-sign --usage-decrypt");
+
+    if(error) {
+        fprintf(stderr,"Could not import public key!\n");
+        return error;
+    }
+
+    debug_print("Importing certificate");
+    error = system("pkcs11-tool -l --pin 12345 --write-object /home/mstrharsky/diplomka/resources/cert.der --type cert --id a1");
+
+    if(error) {
+        fprintf(stderr,"Could not import public key!\n");
+        return error;
+    }
+
+    return 0;
+}
+
 int init_token_with_default_pin(token_info *info) {
 
     CK_UTF8CHAR so_pin[] = {"00000000"};
@@ -126,26 +155,73 @@ int clear_token_with_user_login_setup(void **state) {
     CK_RV rv;
     CK_UTF8CHAR pin[] = {"12345"};
 
-    if(clear_token())
-        fail_msg("Could not clear token!\n");
-
-    if(initialize_cryptoki(info)) {
-        fail_msg("CRYPTOKI couldn't be initialized\n");
-    }
-
-    if(open_session(info))
-        fail_msg("Could not open session to token!\n");
-
-
-    debug_print("Init token with default PIN and log in as user");
-    if(init_token_with_default_pin(info))
-        fail_msg("Could not initialize token with default user PIN\n");
+    if(prepare_token(info))
+        fail_msg("Could not prepare token.\n");
 
 
     rv = function_pointer->C_Login(info->session_handle, CKU_USER, pin, sizeof(pin) - 1);
 
     if(rv != CKR_OK)
         fail_msg("Could not login to token with user PIN '%s'\n", pin);
+
+    return 0;
+}
+
+int clear_token_with_user_login_and_import_keys_setup(void **state) {
+    token_info *info = (token_info *) *state;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_RV rv;
+    CK_UTF8CHAR pin[] = {"12345"};
+
+    if(prepare_token(info))
+        fail_msg("Could not prepare token.\n");
+
+    if(import_keys())
+        fail_msg("Could not import keys to token!\n");
+
+    /* Must close sessions and finalize CRYPTOKI and initialize it again because otherwise imported keys won't be found */
+    debug_print("Closing all sessions");
+    function_pointer->C_CloseAllSessions(info->slot_id);
+    function_pointer->C_Finalize(NULL_PTR);
+
+    if(initialize_cryptoki(info)) {
+        fail_msg("CRYPTOKI couldn't be initialized\n");
+    }
+
+    if(open_session(info)) {
+        fail_msg("Could not open session to token!\n");
+    }
+
+    rv = function_pointer->C_Login(info->session_handle, CKU_USER, pin, sizeof(pin) - 1);
+
+    if(rv != CKR_OK)
+        fail_msg("Could not login to token with user PIN '%s'\n", pin);
+
+    return 0;
+}
+
+int prepare_token(token_info *info) {
+    if(clear_token()) {
+        debug_print("Could not clear token!");
+        return 1;
+    }
+
+    if(initialize_cryptoki(info)) {
+        debug_print("CRYPTOKI couldn't be initialized");
+        return 1;
+    }
+
+    if(open_session(info)) {
+        debug_print("Could not open session to token!");
+        return 1;
+    }
+
+
+    debug_print("Init token with default PIN and log in as user");
+    if(init_token_with_default_pin(info)) {
+        debug_print("Could not initialize token with default user PIN");
+        return 1;
+    }
 
     return 0;
 }
@@ -273,4 +349,34 @@ int initialize_cryptoki(token_info *info) {
     }
 
     return 0;
+}
+
+int find_object_by_template(const token_info* info, CK_ATTRIBUTE *template, CK_OBJECT_HANDLE *object, CK_LONG attributes_count) {
+    CK_RV rv;
+    CK_ULONG object_count;
+
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    rv = function_pointer->C_FindObjectsInit(info->session_handle, template, attributes_count);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
+        return 1;
+    }
+
+    rv = function_pointer->C_FindObjects(info->session_handle, object, attributes_count, &object_count);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
+        return 1;
+    }
+
+    rv = function_pointer->C_FindObjectsFinal(info->session_handle);
+
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
+        return 1;
+    }
+
+    return (*object) == CK_INVALID_HANDLE;
 }

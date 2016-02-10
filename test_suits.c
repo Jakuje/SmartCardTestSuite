@@ -1,5 +1,4 @@
 #include "test_suits.h"
-#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -238,37 +237,6 @@ static void generate_rsa_key_pair_no_key_generated_test(void **state) {
 
 }
 
-int find_object_by_template(const token_info* info, CK_ATTRIBUTE *template, CK_OBJECT_HANDLE *object, CK_LONG attributes_count){
-    CK_RV rv;
-    CK_ULONG object_count;
-
-    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
-
-    rv = function_pointer->C_FindObjectsInit(info->session_handle, template, attributes_count);
-
-    if (rv != CKR_OK) {
-        fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
-        return 1;
-    }
-
-    rv = function_pointer->C_FindObjects(info->session_handle, object, attributes_count, &object_count);
-
-    if (rv != CKR_OK) {
-        fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
-        return 1;
-    }
-
-    rv = function_pointer->C_FindObjectsFinal(info->session_handle);
-
-    if (rv != CKR_OK) {
-        fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
-        return 1;
-    }
-
-    return 0;
-}
-
-
 static void generate_rsa_key_pair_test(void **state) {
     token_info *info = (token_info *) *state;
 
@@ -402,6 +370,143 @@ static void generate_rsa_key_pair_test(void **state) {
     }
 }
 
+static void sign_message_test(void **state) {
+    token_info *info = (token_info *) *state;
+
+    if(!CHECK_SIGN(info->supported.flags))
+        skip();
+
+    CK_RV rv;
+    CK_BYTE id[] = {0xa1};
+    CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_OBJECT_HANDLE private_key;
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE template[] = {
+            { CKA_CLASS, &keyClass, sizeof(keyClass) },
+            { CKA_ID, id, sizeof(id) },
+    };
+
+    if(find_object_by_template(info, template, &private_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find private key.");
+    }
+
+    CK_ULONG message_length, sign_length;
+    CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
+
+    CK_BYTE sign[BUFFER_SIZE];
+    sign_length = BUFFER_SIZE;
+    message_length = strlen(message);
+
+    debug_print("Signing message '%s'",message);
+
+    rv = function_pointer->C_SignInit(info->session_handle, &sign_mechanism, private_key);
+    if (rv != CKR_OK) {
+        fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
+    }
+
+    rv = function_pointer->C_Sign(info->session_handle, message, message_length,
+                                  sign, &sign_length);
+    if (rv != CKR_OK) {
+        fail_msg("C_Sign: rv = 0x%.8X\n", rv);
+    }
+
+    debug_print("Comparing signature to '%s'", SHORT_MESSAGE_SIGNATURE);
+    FILE *fs;
+
+    CK_ULONG data_length = BUFFER_SIZE;
+    char *input_buffer;
+
+    /* Open the input file */
+    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE, "r")) == NULL) {
+        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE);
+    }
+
+
+    fseek(fs, 0, SEEK_END);
+    data_length= ftell(fs);
+    fseek(fs, 0, SEEK_SET);
+
+    input_buffer = (char*) malloc(data_length + 1);
+    fread(input_buffer, data_length, 1, fs);
+    input_buffer[data_length] = 0;
+    fclose(fs);
+
+    if(data_length != sign_length) {
+        free(input_buffer);
+        fail_msg("Output signature has different length!\n");
+    }
+
+    if(memcmp(input_buffer, sign, data_length) != 0) {
+        free(input_buffer);
+        fail_msg("Signatures are not same!");
+    }
+
+    debug_print("Message was successfully signed with private key!\n");
+}
+
+static void verify_signed_message_test(void **state) {
+    token_info *info = (token_info *) *state;
+
+    if(!CHECK_VERIFY(info->supported.flags))
+        skip();
+
+    CK_RV rv;
+    CK_BYTE id[] = {0xa1};
+    CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_OBJECT_HANDLE public_key;
+    CK_OBJECT_CLASS keyClass = CKO_PUBLIC_KEY;
+    CK_ATTRIBUTE template[] = {
+            { CKA_CLASS, &keyClass, sizeof(keyClass) },
+            { CKA_ID, id, sizeof(id) },
+    };
+
+    if(find_object_by_template(info, template, &public_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find public key.");
+    }
+
+    CK_ULONG message_length;
+    CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
+    message_length = strlen(message);
+
+    FILE *fs;
+
+    CK_ULONG sign_length = BUFFER_SIZE;
+    CK_BYTE *sign;
+
+    /* Open the input file */
+    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE, "r")) == NULL) {
+        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE);
+    }
+
+    fseek(fs, 0, SEEK_END);
+    sign_length= ftell(fs);
+    fseek(fs, 0, SEEK_SET);
+
+    sign = (CK_BYTE *) malloc(sign_length + 1);
+    fread(sign, sign_length, 1, fs);
+    sign[sign_length] = 0;
+    fclose(fs);
+
+    debug_print("Verifying message signature");
+
+    rv = function_pointer->C_VerifyInit(info->session_handle, &sign_mechanism, public_key);
+    if (rv != CKR_OK) {
+        free(sign);
+        fail_msg("C_VerifyInit: rv = 0x%.8X\n", rv);
+    }
+
+    rv = function_pointer->C_Verify(info->session_handle, (CK_BYTE_PTR)message, message_length, (CK_BYTE_PTR)sign, sign_length);
+    if (rv != CKR_OK) {
+        free(sign);
+        fail_msg("C_Verify: rv = 0x%.8X\n", rv);
+    }
+
+    debug_print("Message was successfully verified with public key!\n");
+}
 
 int main(int argc, char** argv) {
 
@@ -431,6 +536,10 @@ int main(int argc, char** argv) {
             /* Key generation tests */
             cmocka_unit_test_setup_teardown(generate_rsa_key_pair_no_key_generated_test, clear_token_with_user_login_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(generate_rsa_key_pair_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Sign and Verify tests */
+            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
 
     };
 
