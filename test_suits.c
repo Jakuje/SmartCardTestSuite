@@ -412,15 +412,15 @@ static void sign_message_test(void **state) {
         fail_msg("C_Sign: rv = 0x%.8X\n", rv);
     }
 
-    debug_print("Comparing signature to '%s'", SHORT_MESSAGE_SIGNATURE);
+    debug_print("Comparing signature to '%s'", SHORT_MESSAGE_SIGNATURE_PATH);
     FILE *fs;
 
     CK_ULONG data_length = BUFFER_SIZE;
     char *input_buffer;
 
     /* Open the input file */
-    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE, "r")) == NULL) {
-        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE);
+    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE_PATH, "r")) == NULL) {
+        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE_PATH);
     }
 
 
@@ -443,6 +443,7 @@ static void sign_message_test(void **state) {
         fail_msg("Signatures are not same!");
     }
 
+    free(input_buffer);
     debug_print("Message was successfully signed with private key!\n");
 }
 
@@ -478,8 +479,8 @@ static void verify_signed_message_test(void **state) {
     CK_BYTE *sign;
 
     /* Open the input file */
-    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE, "r")) == NULL) {
-        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE);
+    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE_PATH, "r")) == NULL) {
+        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE_PATH);
     }
 
     fseek(fs, 0, SEEK_END);
@@ -505,7 +506,82 @@ static void verify_signed_message_test(void **state) {
         fail_msg("C_Verify: rv = 0x%.8X\n", rv);
     }
 
+    free(sign);
     debug_print("Message was successfully verified with public key!\n");
+}
+
+static void decrypt_encrypted_message_test(void **state) {
+    token_info *info = (token_info *) *state;
+
+    if(!CHECK_DECRYPT(info->supported.flags))
+        skip();
+
+    CK_RV rv;
+    CK_BYTE id[] = {0xa1};
+    CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_OBJECT_HANDLE private_key;
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE template[] = {
+            { CKA_CLASS, &keyClass, sizeof(keyClass) },
+            { CKA_ID, id, sizeof(id) },
+    };
+
+    if(find_object_by_template(info, template, &private_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find private key.");
+    }
+
+    CK_ULONG expected_message_length, output_message_length = BUFFER_SIZE;
+    CK_BYTE *expected_message = (CK_BYTE *)DECRYPTED_MESSAGE, output_message[BUFFER_SIZE];
+    expected_message_length = strlen(expected_message);
+
+    FILE *fs;
+
+    CK_ULONG encrypted_message_length = BUFFER_SIZE;
+    CK_BYTE *encrypted_message;
+
+    /* Open the input file */
+    if ((fs = fopen(ENCRYPTED_MESSAGE_PATH, "r")) == NULL) {
+        fail_msg("Could not open file '%s' for reading\n", ENCRYPTED_MESSAGE_PATH);
+    }
+
+    fseek(fs, 0, SEEK_END);
+    encrypted_message_length = ftell(fs);
+    fseek(fs, 0, SEEK_SET);
+
+    encrypted_message = (CK_BYTE *) malloc(encrypted_message_length + 1);
+    fread(encrypted_message, encrypted_message_length, 1, fs);
+    encrypted_message[encrypted_message_length] = 0;
+    fclose(fs);
+
+    debug_print("Decrypting encrypted message");
+
+    rv = function_pointer->C_DecryptInit(info->session_handle, &sign_mechanism, private_key);
+    if (rv != CKR_OK) {
+        free(encrypted_message);
+        fail_msg("C_DecryptInit: rv = 0x%.8X\n", rv);
+    }
+
+    rv = function_pointer->C_Decrypt(info->session_handle, (CK_BYTE_PTR) encrypted_message, encrypted_message_length, (CK_BYTE_PTR) output_message,
+                                     &output_message_length);
+    if (rv != CKR_OK) {
+        free(encrypted_message);
+        fail_msg("C_Decrypt: rv = 0x%.8X\n", rv);
+    }
+
+    if(expected_message_length != output_message_length) {
+        free(encrypted_message);
+        fail_msg("Decrypted message doesn't have expected length!\n");
+    }
+
+    if(memcmp(expected_message,output_message, expected_message_length) != 0) {
+        free(encrypted_message);
+        fail_msg("Decrypted message and expected message are different!\n");
+    }
+
+    free(encrypted_message);
+    debug_print("Message was successfully decrypted!\n");
 }
 
 int main(int argc, char** argv) {
@@ -540,6 +616,9 @@ int main(int argc, char** argv) {
             /* Sign and Verify tests */
             cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+            /* Decryption tests */
+            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
 
     };
 
