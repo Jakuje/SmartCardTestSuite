@@ -1,4 +1,5 @@
 #include "test_suits.h"
+#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -415,7 +416,7 @@ static void sign_message_test(void **state) {
     debug_print("Comparing signature to '%s'", SHORT_MESSAGE_SIGNATURE_PATH);
 
     CK_ULONG data_length;
-    char *input_buffer;
+    CK_BYTE *input_buffer;
 
     if(read_whole_file(&data_length, &input_buffer, SHORT_MESSAGE_SIGNATURE_PATH))
         fail_msg("Could not read data from file '%s'!\n",SHORT_MESSAGE_SIGNATURE_PATH);
@@ -546,6 +547,40 @@ static void decrypt_encrypted_message_test(void **state) {
     debug_print("Message was successfully decrypted!\n");
 }
 
+static void find_all_objects_test(void **state) {
+
+    token_info *info = (token_info *) *state;
+
+    CK_RV rv;
+    CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
+    CK_ULONG object_count, expected_object_count = 3, returned_object_count = 0;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    rv = function_pointer->C_FindObjectsInit(info->session_handle, NULL_PTR, 0);
+
+    if(rv != CKR_OK) {
+        fail_msg("C_FindObjectsInit: rv = 0x%.8X\n", rv);
+    }
+
+    while (1) {
+        rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, 1, &object_count);
+        if (rv != CKR_OK || object_count == 0)
+            break;
+
+        returned_object_count++;
+    }
+
+    rv = function_pointer->C_FindObjectsFinal(info->session_handle);
+    if(rv != CKR_OK) {
+        fail_msg("C_FindObjectsFinal: rv = 0x%.8X\n", rv);
+    }
+
+    if(expected_object_count != returned_object_count)
+        fail_msg("Only '%d' objects were found on token but expected count was '%d'!\n",returned_object_count, expected_object_count);
+
+    debug_print("All objects were successfully found!");
+}
+
 int main(int argc, char** argv) {
 
     if (argc != 2) {
@@ -559,28 +594,31 @@ int main(int argc, char** argv) {
 
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
-            cmocka_unit_test(is_ec_supported_test),
+//            cmocka_unit_test(is_ec_supported_test),
+//
+//            /* User PIN tests */
+//            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
+//
+//            /* Message digest tests */
+//            cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(create_hash_sha1_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(create_hash_sha1_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+//
+//            /* Key generation tests */
+//            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_no_key_generated_test, clear_token_with_user_login_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_test, clear_token_with_user_login_setup, after_test_cleanup),
+//
+//            /* Sign and Verify tests */
+//            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+//
+//            /* Decryption tests */
+//            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
 
-            /* User PIN tests */
-            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
-
-            /* Message digest tests */
-            cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(create_hash_sha1_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(create_hash_sha1_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-
-            /* Key generation tests */
-            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_no_key_generated_test, clear_token_with_user_login_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_test, clear_token_with_user_login_setup, after_test_cleanup),
-
-            /* Sign and Verify tests */
-            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-
-            /* Decryption tests */
-            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+            /* Find objects tests */
+            cmocka_unit_test_setup_teardown(find_all_objects_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
 
     };
 
