@@ -1,5 +1,4 @@
 #include "test_suits.h"
-#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -124,7 +123,7 @@ static void create_hash_md5_short_message_test(void **state) {
     if(!CHECK_DIGEST_MD5(info->supported.flags))
         skip();
 
-    CK_BYTE *message_expected_hash = hex_string_to_byte_array("34123b38395588f72f49d51d8dd6bd3b");
+    CK_BYTE *message_expected_hash = hex_string_to_byte_array("34123b38395588f72f49d51d8dd6bd3b", NULL);
 
     CK_MECHANISM digest_mechanism = { CKM_MD5, NULL, 0 };
     CK_BYTE hash[BUFFER_SIZE];
@@ -145,7 +144,7 @@ static void create_hash_md5_long_message_test(void **state) {
     if(!CHECK_DIGEST_MD5(info->supported.flags))
         skip();
 
-    CK_BYTE *message_expected_hash = hex_string_to_byte_array("365573858b89fabadaae4a263305c5a3");
+    CK_BYTE *message_expected_hash = hex_string_to_byte_array("365573858b89fabadaae4a263305c5a3", NULL);
 
     CK_MECHANISM digest_mechanism = { CKM_MD5, NULL, 0};
     CK_BYTE hash[MAX_DIGEST];
@@ -166,7 +165,7 @@ static void create_hash_sha1_short_message_test(void **state) {
     if(!CHECK_DIGEST_SHA1(info->supported.flags))
         skip();
 
-    CK_BYTE *message_expected_hash = hex_string_to_byte_array("4a331deda41ea92c562b6c7931c423c444155ad4");
+    CK_BYTE *message_expected_hash = hex_string_to_byte_array("4a331deda41ea92c562b6c7931c423c444155ad4", NULL);
 
     CK_MECHANISM digest_mechanism = { CKM_SHA_1, NULL, 0};
     CK_BYTE hash[BUFFER_SIZE];
@@ -187,7 +186,7 @@ static void create_hash_sha1_long_message_test(void **state) {
     if(!CHECK_DIGEST_MD5(info->supported.flags))
         skip();
 
-    CK_BYTE *message_expected_hash = hex_string_to_byte_array("8001e8a7e1079e611b0945377784ea4d6ad273e7");
+    CK_BYTE *message_expected_hash = hex_string_to_byte_array("8001e8a7e1079e611b0945377784ea4d6ad273e7", NULL);
 
     CK_MECHANISM digest_mechanism = { CKM_SHA_1, NULL, 0};
     CK_BYTE hash[MAX_DIGEST];
@@ -581,6 +580,171 @@ static void find_all_objects_test(void **state) {
     debug_print("All objects were successfully found!");
 }
 
+static void find_object_according_to_template_test(void **state) {
+
+    token_info *info = (token_info *) *state;
+
+    CK_BYTE id[] = {0xa1};
+    CK_OBJECT_HANDLE certificate_handle = CK_INVALID_HANDLE;
+
+    CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
+    CK_ATTRIBUTE template[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_ID,    id,        sizeof(id)},
+    };
+
+    if (find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find certificate.");
+    }
+
+}
+
+static void find_object_and_read_attributes_test(void **state) {
+
+    token_info *info = (token_info *) *state;
+
+    CK_RV rv;
+    CK_BYTE id[] = {0xa1};
+    CK_OBJECT_HANDLE certificate_handle = CK_INVALID_HANDLE;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
+    CK_ATTRIBUTE template[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_ID,    id,        sizeof(id)},
+    };
+
+    if (find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find certificate.");
+    }
+
+    debug_print("\nTest if certificate attributes are correct ");
+    CK_ULONG template_size;
+
+    /* Create sample message. */
+    CK_ATTRIBUTE get_certificate_attributes[] = {
+            { CKA_CERTIFICATE_TYPE, NULL_PTR, 0},
+            { CKA_LABEL, NULL_PTR, 0},
+
+            /* Specific X.509 certificate attributes */
+            { CKA_SUBJECT, NULL_PTR, 0},
+            { CKA_ISSUER, NULL_PTR, 0},
+            { CKA_SERIAL_NUMBER, NULL_PTR, 0},
+    };
+
+    template_size = sizeof (get_certificate_attributes) / sizeof (CK_ATTRIBUTE);
+
+    rv = function_pointer->C_GetAttributeValue(info->session_handle, certificate_handle,
+                                               get_certificate_attributes,
+                                               template_size);
+
+    if (rv != CKR_OK) {
+        fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+    }
+
+    /* Allocate memory to hold the data we want */
+    for (int i = 0; i < template_size; i++) {
+        get_certificate_attributes[i].pValue = malloc (get_certificate_attributes[i].ulValueLen * sizeof(CK_VOID_PTR));
+
+        if (get_certificate_attributes[i].pValue == NULL) {
+            for (int j = 0; j < i; j++)
+                free(get_certificate_attributes[j].pValue);
+        }
+    }
+
+    /* Call again to get actual attributes */
+    rv = function_pointer->C_GetAttributeValue(info->session_handle, certificate_handle,
+                                               get_certificate_attributes,
+                                               template_size);
+
+    char error_message[50] = { 0 };
+    CK_BYTE *expected_subject = NULL, *expected_issuer = NULL, *expected_serial_number = NULL;
+
+
+    if (rv != CKR_OK) {
+        sprintf(error_message, "C_GetAttributeValue: rv = 0x%.8X\n", rv);
+        goto cleanup;
+    }
+
+    debug_print("Comparing certificate type");
+    if(CKC_X_509 != *((CK_ULONG_PTR)(get_certificate_attributes[0].pValue))) {
+        sprintf(error_message, "Stored certificate is not X.509\n");
+        goto cleanup;
+    }
+
+    debug_print("Comparing certificate label");
+    CK_UTF8CHAR *label = (CK_UTF8CHAR *) get_certificate_attributes[1].pValue;
+    CK_UTF8CHAR *expected_label = "Certificate";
+
+    if(memcmp(expected_label,label, strlen(expected_label)) != 0) {
+        sprintf(error_message, "Certificate label is different from expected\n");
+        goto cleanup;
+    }
+
+    debug_print("Comparing certificate subject");
+    CK_LONG subject_length = get_certificate_attributes[2].ulValueLen, expected_subject_length;
+    expected_subject = hex_string_to_byte_array(CERTIFICATE_SUBJECT_HEX, &expected_subject_length);
+
+    if(expected_subject_length != subject_length) {
+        sprintf(error_message, "Length of subject name is not as expected\n");
+        goto cleanup;
+    }
+
+    if(memcmp(expected_subject,(CK_BYTE *) get_certificate_attributes[2].pValue, subject_length) != 0) {
+        sprintf(error_message, "Subjects are not the same!\n");
+        goto cleanup;
+    }
+
+    debug_print("Comparing certificate issuer");
+    CK_LONG issuer_length = get_certificate_attributes[3].ulValueLen, expected_issuer_length;
+    expected_issuer = hex_string_to_byte_array(CERTIFICATE_SUBJECT_HEX, &expected_issuer_length);
+
+    if(expected_issuer_length != issuer_length) {
+        sprintf(error_message, "Length of issuer name is not as expected\n");
+        goto cleanup;
+    }
+
+    if(memcmp(expected_issuer,(CK_BYTE *) get_certificate_attributes[3].pValue, issuer_length) != 0) {
+        sprintf(error_message, "Issuers are not the same!\n");
+        goto cleanup;
+    }
+
+    debug_print("Comparing certificate serial number");
+    CK_LONG serial_number_length = get_certificate_attributes[4].ulValueLen, expected_serial_number_length;
+    expected_serial_number = hex_string_to_byte_array(CERTIFICATE_SERIAL_NUMBER, &expected_serial_number_length);
+
+    if(expected_serial_number_length != serial_number_length) {
+        sprintf(error_message, "Length of serial number is not as expected\n");
+        goto cleanup;
+    }
+
+    if(memcmp(expected_serial_number,(CK_BYTE *) get_certificate_attributes[4].pValue, serial_number_length) != 0) {
+        sprintf(error_message, "Serial numbers are not the same!\n");
+        goto cleanup;
+    }
+
+    debug_print("All attributes were correctly stored on token");
+
+cleanup:
+    for (int j = 0; j < template_size; j++)
+        free(get_certificate_attributes[j].pValue);
+
+    if(expected_subject)
+        free(expected_subject);
+
+    if(expected_issuer)
+        free(expected_issuer);
+
+    if(expected_serial_number)
+        free(expected_serial_number);
+
+    if(strlen(error_message))
+        fail_msg("%s",error_message);
+    else
+        return;
+}
+
+
 int main(int argc, char** argv) {
 
     if (argc != 2) {
@@ -594,31 +758,33 @@ int main(int argc, char** argv) {
 
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
-//            cmocka_unit_test(is_ec_supported_test),
-//
-//            /* User PIN tests */
-//            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
-//
-//            /* Message digest tests */
-//            cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(create_hash_sha1_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(create_hash_sha1_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-//
-//            /* Key generation tests */
-//            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_no_key_generated_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_test, clear_token_with_user_login_setup, after_test_cleanup),
-//
-//            /* Sign and Verify tests */
-//            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-//
-//            /* Decryption tests */
-//            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+            cmocka_unit_test(is_ec_supported_test),
+
+            /* User PIN tests */
+            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(change_user_pin_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Message digest tests */
+            cmocka_unit_test_setup_teardown(create_hash_md5_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(create_hash_md5_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(create_hash_sha1_short_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(create_hash_sha1_long_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Key generation tests */
+            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_no_key_generated_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(generate_rsa_key_pair_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Sign and Verify tests */
+            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+            /* Decryption tests */
+            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
 
             /* Find objects tests */
             cmocka_unit_test_setup_teardown(find_all_objects_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(find_object_according_to_template_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(find_object_and_read_attributes_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
 
     };
 

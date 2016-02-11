@@ -11,7 +11,7 @@
 
 char* library_path;
 
-CK_BYTE* hex_string_to_byte_array(char* hex_string);
+CK_BYTE* hex_string_to_byte_array(char* hex_string, CK_LONG *hex_array_length);
 
 int clear_token();
 int open_session(token_info *info);

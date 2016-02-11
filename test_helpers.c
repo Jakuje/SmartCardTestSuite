@@ -243,7 +243,7 @@ int after_test_cleanup(void **state) {
 //        fail_msg("Could not clear token!\n");
 }
 
-CK_BYTE* hex_string_to_byte_array(char* hex_string) {
+CK_BYTE* hex_string_to_byte_array(char* hex_string, CK_LONG *hex_array_length) {
 
     int length = strlen(hex_string) / 2;
     CK_BYTE *hex_array = (CK_BYTE*) malloc(length * sizeof(CK_BYTE));
@@ -253,6 +253,9 @@ CK_BYTE* hex_string_to_byte_array(char* hex_string) {
     for(int i = 0; i < length; i++) {
         sscanf(hex_string+2*i, "%2X", &hex_array[i]);
     }
+
+    if(hex_array_length)
+        *hex_array_length = length;
 
     return hex_array;
 }
