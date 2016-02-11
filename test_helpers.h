@@ -31,5 +31,6 @@ int short_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism,
 int long_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism, CK_BYTE *hash, CK_ULONG *hash_length);
 
 int find_object_by_template(const token_info* info, CK_ATTRIBUTE *template, CK_OBJECT_HANDLE *object, CK_LONG attributes_count);
+int read_whole_file(CK_ULONG *data_length, CK_BYTE **input_buffer, char *file_path);
 
 #endif //SMARTCARDTESTSUIT_TEST_HELPERS_H

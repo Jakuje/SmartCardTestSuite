@@ -380,3 +380,26 @@ int find_object_by_template(const token_info* info, CK_ATTRIBUTE *template, CK_O
 
     return (*object) == CK_INVALID_HANDLE;
 }
+
+int read_whole_file(CK_ULONG *data_length, CK_BYTE **input_buffer, char *file_path) {
+
+    FILE *fs;
+
+    /* Open the input file */
+    if ((fs = fopen(file_path, "r")) == NULL) {
+        fprintf(stderr, "Could not open file '%s' for reading\n", file_path);
+        return 1;
+    }
+
+
+    fseek(fs, 0, SEEK_END);
+    (*data_length) = ftell(fs);
+    fseek(fs, 0, SEEK_SET);
+
+    *input_buffer = (char*) malloc(*data_length + 1);
+    fread(*input_buffer, *data_length, 1, fs);
+    (*input_buffer)[*data_length] = 0;
+    fclose(fs);
+
+    return 0;
+}

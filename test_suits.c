@@ -413,25 +413,13 @@ static void sign_message_test(void **state) {
     }
 
     debug_print("Comparing signature to '%s'", SHORT_MESSAGE_SIGNATURE_PATH);
-    FILE *fs;
 
-    CK_ULONG data_length = BUFFER_SIZE;
+    CK_ULONG data_length;
     char *input_buffer;
 
-    /* Open the input file */
-    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE_PATH, "r")) == NULL) {
-        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE_PATH);
-    }
+    if(read_whole_file(&data_length, &input_buffer, SHORT_MESSAGE_SIGNATURE_PATH))
+        fail_msg("Could not read data from file '%s'!\n",SHORT_MESSAGE_SIGNATURE_PATH);
 
-
-    fseek(fs, 0, SEEK_END);
-    data_length= ftell(fs);
-    fseek(fs, 0, SEEK_SET);
-
-    input_buffer = (char*) malloc(data_length + 1);
-    fread(input_buffer, data_length, 1, fs);
-    input_buffer[data_length] = 0;
-    fclose(fs);
 
     if(data_length != sign_length) {
         free(input_buffer);
@@ -473,24 +461,11 @@ static void verify_signed_message_test(void **state) {
     CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
     message_length = strlen(message);
 
-    FILE *fs;
-
     CK_ULONG sign_length = BUFFER_SIZE;
     CK_BYTE *sign;
 
-    /* Open the input file */
-    if ((fs = fopen(SHORT_MESSAGE_SIGNATURE_PATH, "r")) == NULL) {
-        fail_msg("Could not open file '%s' for reading\n", SHORT_MESSAGE_SIGNATURE_PATH);
-    }
-
-    fseek(fs, 0, SEEK_END);
-    sign_length= ftell(fs);
-    fseek(fs, 0, SEEK_SET);
-
-    sign = (CK_BYTE *) malloc(sign_length + 1);
-    fread(sign, sign_length, 1, fs);
-    sign[sign_length] = 0;
-    fclose(fs);
+    if(read_whole_file(&sign_length, &sign, SHORT_MESSAGE_SIGNATURE_PATH))
+        fail_msg("Could not open file '%s'!\n",SHORT_MESSAGE_SIGNATURE_PATH);
 
     debug_print("Verifying message signature");
 
@@ -536,24 +511,11 @@ static void decrypt_encrypted_message_test(void **state) {
     CK_BYTE *expected_message = (CK_BYTE *)DECRYPTED_MESSAGE, output_message[BUFFER_SIZE];
     expected_message_length = strlen(expected_message);
 
-    FILE *fs;
-
     CK_ULONG encrypted_message_length = BUFFER_SIZE;
     CK_BYTE *encrypted_message;
 
-    /* Open the input file */
-    if ((fs = fopen(ENCRYPTED_MESSAGE_PATH, "r")) == NULL) {
+    if(read_whole_file(&encrypted_message_length, &encrypted_message, ENCRYPTED_MESSAGE_PATH))
         fail_msg("Could not open file '%s' for reading\n", ENCRYPTED_MESSAGE_PATH);
-    }
-
-    fseek(fs, 0, SEEK_END);
-    encrypted_message_length = ftell(fs);
-    fseek(fs, 0, SEEK_SET);
-
-    encrypted_message = (CK_BYTE *) malloc(encrypted_message_length + 1);
-    fread(encrypted_message, encrypted_message_length, 1, fs);
-    encrypted_message[encrypted_message_length] = 0;
-    fclose(fs);
 
     debug_print("Decrypting encrypted message");
 
