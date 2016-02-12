@@ -1,4 +1,5 @@
 #include "test_suits.h"
+#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -740,9 +741,56 @@ cleanup:
 
     if(strlen(error_message))
         fail_msg("%s",error_message);
-    else
-        return;
+
+    return;
 }
+
+static void generate_random_data_test(void **state) {
+
+    token_info *info = (token_info *) *state;
+
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_LONG seed_length;
+    CK_BYTE *seed_data = hex_string_to_byte_array(SEED_DATA, &seed_length);
+    CK_BYTE *empty_array = hex_string_to_byte_array(EMPTY_ARRAY, NULL);
+    CK_BYTE random_data[RANDOM_DATA_SIZE] = { 0 };
+    CK_RV rv;
+
+    char error_message[50] = { 0 };
+    /* Seed random token generator */
+    rv = function_pointer->C_SeedRandom(info->session_handle, seed_data, seed_length);
+    if (rv != CKR_OK && rv != CKR_FUNCTION_NOT_SUPPORTED) {
+        sprintf(error_message, "Could not seed random generator!\nC_SeedRandom: rv = 0x%.8x\n",rv);
+        goto cleanup;
+    }
+
+    if(rv == CKR_FUNCTION_NOT_SUPPORTED) {
+        fprintf(stdout, "Seed method is not supported.\n");
+    }
+
+    /* Generate random bytes */
+    rv = function_pointer->C_GenerateRandom(info->session_handle, random_data, RANDOM_DATA_SIZE);
+
+    if (rv != CKR_OK) {
+        sprintf(error_message, "C_GenerateRandom: rv = 0x%.8x\n", rv);
+        goto cleanup;
+    }
+
+    if(memcmp(empty_array, random_data, RANDOM_DATA_SIZE) == 0) {
+        sprintf(error_message, "Random data were not generated!\n");
+        goto cleanup;
+    }
+
+cleanup:
+    free(seed_data);
+    free(empty_array);
+
+    if(strlen(error_message))
+        fail_msg("%s", error_message);
+
+    return;
+}
+
 
 
 int main(int argc, char** argv) {
@@ -785,6 +833,9 @@ int main(int argc, char** argv) {
             cmocka_unit_test_setup_teardown(find_all_objects_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(find_object_according_to_template_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
             cmocka_unit_test_setup_teardown(find_object_and_read_attributes_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+            /* Generate random data tests */
+            cmocka_unit_test_setup_teardown(generate_random_data_test, clear_token_with_user_login_setup, after_test_cleanup),
 
     };
 
