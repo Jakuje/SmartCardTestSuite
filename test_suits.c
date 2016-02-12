@@ -1,5 +1,4 @@
 #include "test_suits.h"
-#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info *info = (token_info *) *state;
@@ -595,7 +594,7 @@ static void find_object_according_to_template_test(void **state) {
     };
 
     if (find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
-        fail_msg("Could not find certificate.");
+        fail_msg("Could not find certificate.\n");
     }
 
 }
@@ -616,7 +615,7 @@ static void find_object_and_read_attributes_test(void **state) {
     };
 
     if (find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
-        fail_msg("Could not find certificate.");
+        fail_msg("Could not find certificate.\n");
     }
 
     debug_print("\nTest if certificate attributes are correct ");
@@ -741,8 +740,6 @@ cleanup:
 
     if(strlen(error_message))
         fail_msg("%s",error_message);
-
-    return;
 }
 
 static void generate_random_data_test(void **state) {
@@ -787,16 +784,80 @@ cleanup:
 
     if(strlen(error_message))
         fail_msg("%s", error_message);
+}
 
-    return;
+static void create_object_test(void **state) {
+
+    token_info *info = (token_info *) *state;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_RV rv;
+    CK_BBOOL true_value = CK_TRUE;
+    CK_BBOOL false_value = CK_FALSE;
+
+    CK_OBJECT_HANDLE des_key_handle = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+
+    CK_UTF8CHAR application[] = {"My Application"};
+    CK_UTF8CHAR label[] = { "My data" };
+    CK_BYTE dataValue[] = { 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef };
+    CK_BYTE object_id[] = { 0x32, 0x00, 0x00 };
+
+    CK_ATTRIBUTE data_template[] = {
+            {CKA_CLASS, &dataClass, sizeof(dataClass)},
+            {CKA_TOKEN, &true_value, sizeof(true_value)},
+            {CKA_APPLICATION, application, sizeof(application)-1},
+            {CKA_LABEL, label, sizeof(label)-1},
+            {CKA_VALUE, dataValue, sizeof(dataValue)},
+            {CKA_PRIVATE, &false_value, sizeof(false_value)},
+            {CKA_OBJECT_ID, object_id, sizeof(object_id)}
+    };
+
+
+    /* Create a data object */
+    rv = function_pointer->C_CreateObject(info->session_handle, data_template, sizeof(data_template) / sizeof(CK_ATTRIBUTE), &des_key_handle);
+    if (rv != CKR_OK) {
+        fail_msg("C_CreateObject: rv = 0x%.8x\n", rv);
+    }
+
+    if(des_key_handle == CK_INVALID_HANDLE)
+        fail_msg("Object was not created on token!\n");
 }
 
 
+static void destroy_object_test(void **state) {
+
+    token_info *info = (token_info *) *state;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_RV rv;
+    CK_BYTE id[] = { 0xa1 };
+    CK_OBJECT_HANDLE certificate_handle;
+    CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
+    CK_ATTRIBUTE template[] = {
+            { CKA_CLASS, &keyClass, sizeof(keyClass) },
+            { CKA_ID, id, sizeof(id) },
+    };
+
+    if(find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Could not find certificate.\n");
+    }
+
+    rv = function_pointer->C_DestroyObject(info->session_handle, certificate_handle);
+
+    if(rv != CKR_OK) {
+        fail_msg("Could not destroy object!\nC_DestroyObject: rv = 0x%.8x\n", rv);
+    }
+
+    if(!find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
+        fail_msg("Certificate was not deleted from token.\n");
+    }
+}
 
 int main(int argc, char** argv) {
 
     if (argc != 2) {
-        fprintf(stderr, "You have to specify path to PKCS#11 library.");
+        fprintf(stderr, "You have to specify path to PKCS#11 library.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -837,8 +898,11 @@ int main(int argc, char** argv) {
             /* Generate random data tests */
             cmocka_unit_test_setup_teardown(generate_random_data_test, clear_token_with_user_login_setup, after_test_cleanup),
 
+            /* Create and delete objects tests */
+            cmocka_unit_test_setup_teardown(create_object_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(destroy_object_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
     };
 
-    return cmocka_run_group_tests(tests_without_initialization, group_setup, group_teardown);
-
+    return cmocka_run_group_tests(tests_without_initialization, group_setup, group_teardown);;
 }
