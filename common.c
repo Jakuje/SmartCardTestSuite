@@ -7,6 +7,7 @@ void display_usage() {
                     "       -m  module_path:   path to tested module (e.g. /usr/lib64/opensc-pkcs11.so)\n"
                     "       -s  so_pin:        Security Officer PIN to token\n"
                     "       -t  card_type:     card type, supported are PKCS15 and PIV\n"
+                    "       -r:                run readonly tests (does not clear the card)\n"
                     "\n");
 }
 
@@ -17,14 +18,14 @@ int set_card_info() {
 
     switch(card_info.type) {
         case PKCS15:
-            strcpy(pin, "12345");
+            strcpy(pin, TOKEN_PIN);
             strcpy(change_pin, "54321");
-            id[0] = 0xa1;
+            id[0] = TOKEN_SIGN_ID;
             break;
         case PIV:
-            strcpy(pin, "123456");
+            strcpy(pin, TOKEN_PIN);
             strcpy(change_pin, "654321");
-            id[0] = 0x01;
+            id[0] = TOKEN_SIGN_ID;
             break;
         default:
             return 1;

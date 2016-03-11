@@ -1,5 +1,7 @@
 #include "test_suits.h"
 
+extern int readonly;
+
 static void is_ec_supported_test(void **state) {
     token_info_t *info = (token_info_t *) *state;
     if(!CHECK_EC_SUPPORT(info->supported.flags))
@@ -407,6 +409,12 @@ static void sign_message_test(void **state) {
     if (rv != CKR_OK) {
         fail_msg("C_Sign: rv = 0x%.8X\n", rv);
     }
+
+	if (readonly) {
+	    debug_print("Writing signature to '%s' for later checks", SHORT_MESSAGE_SIGNATURE_PATH);
+		write_whole_file(&sign_length, sign, SHORT_MESSAGE_SIGNATURE_PATH);
+		return;
+	}
 
     debug_print("Comparing signature to '%s'", SHORT_MESSAGE_SIGNATURE_PATH);
 
@@ -876,7 +884,7 @@ int main(int argc, char** argv) {
     char command, card_type[25];
     int args_count = 0;
 
-    while ((command = getopt(argc, argv, "m:t:s:")) != -1) {
+    while ((command = getopt(argc, argv, "m:t:s:r")) != -1) {
         switch (command) {
             case 'm':
                 library_path = strdup(optarg);
@@ -900,7 +908,9 @@ int main(int argc, char** argv) {
                 card_info.so_pin = strdup(optarg);
                 card_info.so_pin_length = strlen(optarg);
                 break;
-
+            case 'r':
+                readonly = 1;
+                break;
             case 'h':
             case '?':
                 display_usage();
@@ -923,6 +933,32 @@ int main(int argc, char** argv) {
     debug_print("Card info:\n\tPIN %s\n\tCHANGE_PIN %s\n\tPIN LENGTH %d\n\tID 0x%02x\n\tID LENGTH %d",
            card_info.pin, card_info.change_pin, card_info.pin_length, card_info.id[0], card_info.id_length);
 
+    const struct CMUnitTest readonly_tests_without_initialization[] = {
+            cmocka_unit_test(get_all_mechanisms_test),
+            cmocka_unit_test(is_ec_supported_test),
+
+// TODO global pin or something
+
+            /* Sign and Verify tests */
+            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+            /* Decryption tests */
+//            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+            /* Find objects tests */
+//            cmocka_unit_test_setup_teardown(find_all_objects_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(find_object_according_to_template_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(find_object_and_read_attributes_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+            /* Generate random data tests */
+//            cmocka_unit_test_setup_teardown(generate_random_data_test, clear_token_with_user_login_setup, after_test_cleanup),
+
+            /* Create and delete objects tests */
+//            cmocka_unit_test_setup_teardown(create_object_test, clear_token_with_user_login_setup, after_test_cleanup),
+//            cmocka_unit_test_setup_teardown(destroy_object_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
+
+    };
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
             cmocka_unit_test(is_ec_supported_test),
@@ -962,5 +998,10 @@ int main(int argc, char** argv) {
 
     };
 
-    return cmocka_run_group_tests(tests_without_initialization, group_setup, group_teardown);
+    if (readonly) {
+        return cmocka_run_group_tests(readonly_tests_without_initialization, group_setup, group_teardown);;
+    } else {
+        return cmocka_run_group_tests(tests_without_initialization, group_setup, group_teardown);;
+    }
 }
+

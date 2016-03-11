@@ -1,6 +1,8 @@
 #include "test_helpers.h"
 #include "common.h"
 
+int readonly = 0;
+
 int open_session(token_info_t *info) {
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
@@ -19,6 +21,10 @@ int clear_token() {
     debug_print("Clearing token");
 
     int error = 0;
+
+    if (readonly)
+        //skip();
+        return 0;
 
     if (card_info.type == PIV) {
         system("yubico-piv-tool -a verify-pin -P 4711 > /dev/null 2>&1");
@@ -48,6 +54,10 @@ int clear_token() {
 int import_keys() {
 
     int error;
+
+	if (readonly)
+        //skip();
+        return 0;
 
     if(card_info.type == PIV) {
         debug_print("Importing private key");
@@ -104,6 +114,10 @@ int init_token_with_default_pin(token_info_t *info) {
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
+
+    if (readonly)
+        //skip();
+        return 0;
 
     debug_print("Logging in as SO user");
     rv = function_pointer->C_Login(info->session_handle, CKU_SO, card_info.so_pin, card_info.so_pin_length);
@@ -435,6 +449,22 @@ int read_whole_file(CK_ULONG *data_length, CK_BYTE **input_buffer, char *file_pa
 
     *input_buffer = (char*) malloc(*data_length);
     fread(*input_buffer, *data_length, 1, fs);
+    fclose(fs);
+
+    return 0;
+}
+
+int write_whole_file(CK_ULONG *data_length, CK_BYTE *input_buffer, char *file_path) {
+
+    FILE *fs;
+
+    /* Open the output file */
+    if ((fs = fopen(file_path, "w")) == NULL) {
+        fprintf(stderr, "Could not open file '%s' for writing\n", file_path);
+        return 1;
+    }
+
+    fwrite(input_buffer, *data_length, 1, fs);
     fclose(fs);
 
     return 0;

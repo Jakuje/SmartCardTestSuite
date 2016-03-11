@@ -72,4 +72,7 @@ void display_usage();
 int set_card_info();
 void clear_card_info();
 
+#define TOKEN_SIGN_ID 0x02
+#define TOKEN_PIN "123456"
+
 #endif //SMARTCARDTESTSUIT_COMMON_H
