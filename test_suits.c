@@ -1,22 +1,24 @@
+#include <getopt.h>
 #include "test_suits.h"
+#include "common.h"
 
 static void is_ec_supported_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     if(!CHECK_EC_SUPPORT(info->supported.flags))
         skip();
 }
 
 static void initialize_token_with_user_pin_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
-    CK_UTF8CHAR new_pin[] = {"12345"};
     CK_UTF8CHAR wrong_pin[] = {"WrongPin"};
     CK_RV rv;
 
-    if(init_token_with_default_pin(info))
-        fail_msg("Could not initialize token with default user PIN\n");
-
+    if(card_info.type == PKCS15) {
+        if (init_token_with_default_pin(info))
+            fail_msg("Could not initialize token with default user PIN\n");
+    }
 
     debug_print("Test of logging in with wrong user PIN");
     rv = function_pointer->C_Login(info->session_handle, CKU_USER, wrong_pin, sizeof(wrong_pin) - 1);
@@ -25,7 +27,7 @@ static void initialize_token_with_user_pin_test(void **state) {
     }
 
     debug_print("Test of logging in with created user PIN");
-    rv = function_pointer->C_Login(info->session_handle, CKU_USER, new_pin, sizeof(new_pin) - 1);
+    rv = function_pointer->C_Login(info->session_handle, CKU_USER, card_info.pin, card_info.pin_length);
     if (rv != CKR_OK) {
         fail_msg("PIN initialization for user failed. Could not log in to token!\n");
     }
@@ -33,16 +35,14 @@ static void initialize_token_with_user_pin_test(void **state) {
 }
 
 static void change_user_pin_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
 
-    CK_UTF8CHAR old_pin[] = {"12345"};
-    CK_UTF8CHAR new_pin[] = {"54321"};
-
-    debug_print("Change user PIN from '%s' to '%s'",old_pin, new_pin);
-    rv = function_pointer->C_SetPIN(info->session_handle, old_pin, sizeof(old_pin) - 1, new_pin, sizeof(new_pin) - 1);
+    debug_print("Change user PIN from '%s' to '%s'", card_info.pin, card_info.change_pin);
+    rv = function_pointer->C_SetPIN(info->session_handle, card_info.pin, card_info.pin_length, card_info.change_pin, card_info.pin_length);
     if (rv != CKR_OK) {
+        debug_print("C_SetPIN: rv = 0x%.8X\n", rv);
         fail_msg("Change of user password was not successful\n");
     }
 
@@ -53,13 +53,13 @@ static void change_user_pin_test(void **state) {
     }
 
     debug_print("Test of logging in with old user PIN");
-    rv = function_pointer->C_Login(info->session_handle, CKU_USER, old_pin, sizeof(old_pin) - 1);
+    rv = function_pointer->C_Login(info->session_handle, CKU_USER, card_info.pin, card_info.pin_length);
     if (rv != CKR_PIN_INCORRECT) {
         fail_msg("User PIN was not correctly changed\n");
     }
 
     debug_print("Test of logging in with new user PIN");
-    rv = function_pointer->C_Login(info->session_handle, CKU_USER, new_pin, sizeof(new_pin) - 1);
+    rv = function_pointer->C_Login(info->session_handle, CKU_USER, card_info.change_pin, card_info.pin_length);
     if (rv != CKR_OK) {
         fail_msg("PIN change failed. Could not log in with new user PIN!\n");
     }
@@ -68,7 +68,7 @@ static void change_user_pin_test(void **state) {
 }
 
 static void get_all_mechanisms_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
     CK_RV rv;
@@ -93,7 +93,7 @@ static void get_all_mechanisms_test(void **state) {
         }
         assert_non_null(mechanism_list);
 
-        supported_mechanisms supported = { 0 };
+        supported_mechanisms_t supported = {0 };
         for(int i=0; i< mechanism_count; i++) {
             CK_MECHANISM_INFO mechanism_info;
             CK_MECHANISM_TYPE mechanism_type = mechanism_list[i];
@@ -118,7 +118,7 @@ static void get_all_mechanisms_test(void **state) {
 
 
 static void create_hash_md5_short_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_DIGEST_MD5(info->supported.flags))
         skip();
@@ -139,7 +139,7 @@ static void create_hash_md5_short_message_test(void **state) {
 }
 
 static void create_hash_md5_long_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_DIGEST_MD5(info->supported.flags))
         skip();
@@ -160,7 +160,7 @@ static void create_hash_md5_long_message_test(void **state) {
 }
 
 static void create_hash_sha1_short_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_DIGEST_SHA1(info->supported.flags))
         skip();
@@ -181,7 +181,7 @@ static void create_hash_sha1_short_message_test(void **state) {
 }
 
 static void create_hash_sha1_long_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_DIGEST_MD5(info->supported.flags))
         skip();
@@ -202,7 +202,7 @@ static void create_hash_sha1_long_message_test(void **state) {
 }
 
 static void generate_rsa_key_pair_no_key_generated_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_GENERATE_KEY_PAIR(info->supported.flags))
         skip();
@@ -238,7 +238,7 @@ static void generate_rsa_key_pair_no_key_generated_test(void **state) {
 }
 
 static void generate_rsa_key_pair_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_GENERATE_KEY_PAIR(info->supported.flags))
         skip();
@@ -252,11 +252,10 @@ static void generate_rsa_key_pair_test(void **state) {
     CK_BYTE public_exponent[] = { 11 };
     CK_UTF8CHAR public_key_label[] = "My Public Key";
     CK_UTF8CHAR private_key_label[] = "My Private Key";
-    CK_BYTE id[] = { 0xa1 };
 
     /* Set public key. */
     CK_ATTRIBUTE public_key_template[] = {
-            {CKA_ID, id, sizeof(id)},
+            {CKA_ID, card_info.id, card_info.id_length},
             {CKA_LABEL, public_key_label, sizeof(public_key_label)-1},
             {CKA_VERIFY, &true_value, sizeof (true_value)},
             {CKA_ENCRYPT, &true_value, sizeof (true_value)},
@@ -267,7 +266,7 @@ static void generate_rsa_key_pair_test(void **state) {
 
     /* Set private key. */
     CK_ATTRIBUTE private_key_template[] = {
-            {CKA_ID, id, sizeof(id)},
+            {CKA_ID, card_info.id, card_info.id_length},
             {CKA_LABEL, private_key_label, sizeof(private_key_label)-1},
             {CKA_SIGN, &true_value, sizeof (true_value)},
             {CKA_DECRYPT, &true_value, sizeof (true_value)},
@@ -295,7 +294,7 @@ static void generate_rsa_key_pair_test(void **state) {
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     CK_ATTRIBUTE template[] = {
             { CKA_CLASS, &keyClass, sizeof(keyClass) },
-            { CKA_ID, id, sizeof(id) },
+            { CKA_ID, card_info.id, card_info.id_length },
     };
 
     if(find_object_by_template(info, template, &stored_private_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -371,13 +370,12 @@ static void generate_rsa_key_pair_test(void **state) {
 }
 
 static void sign_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_SIGN(info->supported.flags))
         skip();
 
     CK_RV rv;
-    CK_BYTE id[] = {0xa1};
     CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
@@ -385,7 +383,7 @@ static void sign_message_test(void **state) {
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     CK_ATTRIBUTE template[] = {
             { CKA_CLASS, &keyClass, sizeof(keyClass) },
-            { CKA_ID, id, sizeof(id) },
+            { CKA_ID, card_info.id, card_info.id_length },
     };
 
     if(find_object_by_template(info, template, &private_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -436,13 +434,12 @@ static void sign_message_test(void **state) {
 }
 
 static void verify_signed_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_VERIFY(info->supported.flags))
         skip();
 
     CK_RV rv;
-    CK_BYTE id[] = {0xa1};
     CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
@@ -450,7 +447,7 @@ static void verify_signed_message_test(void **state) {
     CK_OBJECT_CLASS keyClass = CKO_PUBLIC_KEY;
     CK_ATTRIBUTE template[] = {
             { CKA_CLASS, &keyClass, sizeof(keyClass) },
-            { CKA_ID, id, sizeof(id) },
+            { CKA_ID, card_info.id, card_info.id_length },
     };
 
     if(find_object_by_template(info, template, &public_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -469,11 +466,13 @@ static void verify_signed_message_test(void **state) {
 
     debug_print("Verifying message signature");
 
+
     rv = function_pointer->C_VerifyInit(info->session_handle, &sign_mechanism, public_key);
     if (rv != CKR_OK) {
         free(sign);
         fail_msg("C_VerifyInit: rv = 0x%.8X\n", rv);
     }
+
 
     rv = function_pointer->C_Verify(info->session_handle, (CK_BYTE_PTR)message, message_length, (CK_BYTE_PTR)sign, sign_length);
     if (rv != CKR_OK) {
@@ -486,13 +485,12 @@ static void verify_signed_message_test(void **state) {
 }
 
 static void decrypt_encrypted_message_test(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     if(!CHECK_DECRYPT(info->supported.flags))
         skip();
 
     CK_RV rv;
-    CK_BYTE id[] = {0xa1};
     CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
@@ -500,7 +498,7 @@ static void decrypt_encrypted_message_test(void **state) {
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     CK_ATTRIBUTE template[] = {
             { CKA_CLASS, &keyClass, sizeof(keyClass) },
-            { CKA_ID, id, sizeof(id) },
+            { CKA_ID, card_info.id, card_info.id_length },
     };
 
     if(find_object_by_template(info, template, &private_key, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -548,7 +546,7 @@ static void decrypt_encrypted_message_test(void **state) {
 
 static void find_all_objects_test(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     CK_RV rv;
     CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
@@ -560,15 +558,30 @@ static void find_all_objects_test(void **state) {
     if(rv != CKR_OK) {
         fail_msg("C_FindObjectsInit: rv = 0x%.8X\n", rv);
     }
+    CK_ULONG_PTR object_class = malloc(sizeof(CK_ULONG));
+
+    CK_ATTRIBUTE get_attributes[] = {
+            {CKA_CLASS, object_class, sizeof(CK_ULONG)},
+    };
 
     while (1) {
         rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, 1, &object_count);
         if (rv != CKR_OK || object_count == 0)
             break;
 
-        returned_object_count++;
+        rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle, get_attributes, sizeof (get_attributes) / sizeof (CK_ATTRIBUTE));
+
+        if (rv != CKR_OK) {
+            free(object_class);
+            fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+        }
+
+        if(*object_class == CKO_PRIVATE_KEY || *object_class == CKO_PUBLIC_KEY || *object_class == CKO_CERTIFICATE) {
+            returned_object_count++;
+        }
     }
 
+    free(object_class);
     rv = function_pointer->C_FindObjectsFinal(info->session_handle);
     if(rv != CKR_OK) {
         fail_msg("C_FindObjectsFinal: rv = 0x%.8X\n", rv);
@@ -582,15 +595,14 @@ static void find_all_objects_test(void **state) {
 
 static void find_object_according_to_template_test(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
-    CK_BYTE id[] = {0xa1};
     CK_OBJECT_HANDLE certificate_handle = CK_INVALID_HANDLE;
 
     CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
     CK_ATTRIBUTE template[] = {
             {CKA_CLASS, &keyClass, sizeof(keyClass)},
-            {CKA_ID,    id,        sizeof(id)},
+            {CKA_ID, card_info.id, card_info.id_length},
     };
 
     if (find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -601,17 +613,16 @@ static void find_object_according_to_template_test(void **state) {
 
 static void find_object_and_read_attributes_test(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     CK_RV rv;
-    CK_BYTE id[] = {0xa1};
     CK_OBJECT_HANDLE certificate_handle = CK_INVALID_HANDLE;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
     CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
     CK_ATTRIBUTE template[] = {
             {CKA_CLASS, &keyClass, sizeof(keyClass)},
-            {CKA_ID,    id,        sizeof(id)},
+            {CKA_ID, card_info.id, card_info.id_length},
     };
 
     if (find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -744,7 +755,7 @@ cleanup:
 
 static void generate_random_data_test(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_LONG seed_length;
@@ -788,7 +799,7 @@ cleanup:
 
 static void create_object_test(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
     CK_RV rv;
@@ -816,6 +827,11 @@ static void create_object_test(void **state) {
 
     /* Create a data object */
     rv = function_pointer->C_CreateObject(info->session_handle, data_template, sizeof(data_template) / sizeof(CK_ATTRIBUTE), &des_key_handle);
+    if(rv == CKR_FUNCTION_NOT_SUPPORTED) {
+        fprintf(stdout, "Function C_CreateObject is not supported!\n");
+        skip();
+    }
+
     if (rv != CKR_OK) {
         fail_msg("C_CreateObject: rv = 0x%.8x\n", rv);
     }
@@ -827,16 +843,15 @@ static void create_object_test(void **state) {
 
 static void destroy_object_test(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
     CK_RV rv;
-    CK_BYTE id[] = { 0xa1 };
     CK_OBJECT_HANDLE certificate_handle;
     CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
     CK_ATTRIBUTE template[] = {
             { CKA_CLASS, &keyClass, sizeof(keyClass) },
-            { CKA_ID, id, sizeof(id) },
+            { CKA_ID, card_info.id, card_info.id_length },
     };
 
     if(find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
@@ -844,6 +859,10 @@ static void destroy_object_test(void **state) {
     }
 
     rv = function_pointer->C_DestroyObject(info->session_handle, certificate_handle);
+    if(rv == CKR_FUNCTION_NOT_SUPPORTED) {
+        fprintf(stdout, "Function C_DestroyObject is not supported!\n");
+        skip();
+    }
 
     if(rv != CKR_OK) {
         fail_msg("Could not destroy object!\nC_DestroyObject: rv = 0x%.8x\n", rv);
@@ -856,14 +875,53 @@ static void destroy_object_test(void **state) {
 
 int main(int argc, char** argv) {
 
-    if (argc != 2) {
-        fprintf(stderr, "You have to specify path to PKCS#11 library.\n");
-        exit(EXIT_FAILURE);
+    char command, card_type[25];
+    int args_count = 0;
+
+    while ((command = getopt(argc, argv, "m:t:")) != -1) {
+        switch (command) {
+            case 'm':
+                library_path = malloc(strlen(optarg) + 1);
+                strcpy(library_path,optarg);
+                library_path[strlen(optarg)] = 0;
+                args_count++;
+                break;
+            case 't':
+                strcpy(card_type,optarg);
+                card_type[strlen(optarg)] = 0;
+
+                if (strcmp(optarg, "PKCS15") == 0)
+                    card_info.type = PKCS15;
+                else if (strcmp(optarg, "PIV") == 0)
+                    card_info.type = PIV;
+                else {
+                    fprintf(stderr, "Unsupported card type \"%s\"\n", optarg);
+                    display_usage();
+                    return 1;
+                }
+                args_count++;
+                break;
+            case 'h':
+            case '?':
+                display_usage();
+                return 0;
+            default:
+                break;
+        }
     }
 
-    library_path = malloc(strlen(argv[1]) + 1);
-    strcpy(library_path,argv[1]);
-    library_path[strlen(argv[1])] = 0;
+    if(args_count != 2) {
+        display_usage();
+        return 1;
+    }
+
+    if(set_card_info()) {
+        fprintf(stderr, "Could not set card info!\n");
+        return 1;
+    }
+
+    debug_print("Card info:\n\tPIN %s\n\tCHANGE_PIN %s\n\tPIN LENGTH %d\n\tID 0x%02x\n\tID LENGTH %d",
+           card_info.pin, card_info.change_pin, card_info.pin_length, card_info.id[0], card_info.id_length);
 
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
@@ -904,5 +962,5 @@ int main(int argc, char** argv) {
 
     };
 
-    return cmocka_run_group_tests(tests_without_initialization, group_setup, group_teardown);;
+    return cmocka_run_group_tests(tests_without_initialization, group_setup, group_teardown);
 }

@@ -1,6 +1,6 @@
 #include "test_helpers.h"
 
-int open_session(token_info *info) {
+int open_session(token_info_t *info) {
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
 
@@ -17,18 +17,27 @@ int open_session(token_info *info) {
 int clear_token() {
     debug_print("Clearing token");
 
+    int error = 0;
 
-    int error = system("pkcs15-init -ET");
-
-    if(error) {
-        fprintf(stderr,"Could not erase token!\n");
-        return error;
+    if (card_info.type == PIV) {
+        system("yubico-piv-tool -a verify-pin -P 4711 > /dev/null 2>&1");
+        system("yubico-piv-tool -a verify-pin -P 4711 > /dev/null 2>&1");
+        system("yubico-piv-tool -a verify-pin -P 4711 > /dev/null 2>&1");
+        system("yubico-piv-tool -a verify-pin -P 4711 > /dev/null 2>&1");
+        system("yubico-piv-tool -a change-puk -P 4711 -N 67567 > /dev/null 2>&1");
+        system("yubico-piv-tool -a change-puk -P 4711 -N 67567 > /dev/null 2>&1");
+        system("yubico-piv-tool -a change-puk -P 4711 -N 67567 > /dev/null 2>&1");
+        system("yubico-piv-tool -a change-puk -P 4711 -N 67567 > /dev/null 2>&1");
+        error |= system("yubico-piv-tool -a reset > /dev/null 2>&1");
     }
 
-    error = system("pkcs15-init -CT --no-so-pin");
+    if(card_info.type == PKCS15) {
+        error |= system("pkcs15-init -ET > /dev/null 2>&1");
+        error |= system("pkcs15-init -CT --no-so-pin > /dev/null 2>&1");
+    }
 
     if(error) {
-        fprintf(stderr,"Could not init token!\n");
+        fprintf(stderr,"Could not clear token!\n");
         return error;
     }
 
@@ -36,38 +45,63 @@ int clear_token() {
 }
 
 int import_keys() {
-    debug_print("Importing private key");
 
-    int error = system("pkcs11-tool -l --pin 12345 --write-object /home/mstrharsky/diplomka/resources/private_key.key --type privkey --id a1 --label \"My Private Key\" --usage-sign --usage-decrypt");
+    int error;
 
-    if(error) {
-        fprintf(stderr,"Could not import private key!\n");
-        return error;
+    if(card_info.type == PIV) {
+        debug_print("Importing private key");
+        error = system("yubico-piv-tool -a import-key -s 9a -i ../resources/private_key.pem > /dev/null 2>&1");
+
+        if (error) {
+            fprintf(stderr, "Could not import private key!\n");
+            return error;
+        }
+
+        debug_print("Importing public key and certificate");
+
+        error = system("yubico-piv-tool -a import-certificate -s 9a -K DER -i ../resources/cert.der > /dev/null 2>&1");
+
+        if (error) {
+            fprintf(stderr, "Could not import public key!\n");
+            return error;
+        }
     }
 
-    debug_print("Importing public key");
-    error = system("pkcs11-tool -l --pin 12345 --write-object /home/mstrharsky/diplomka/resources/public_key.key --type pubkey --id a1 --label \"My Public Key\" --usage-sign --usage-decrypt");
+    if(card_info.type == PKCS15) {
+        debug_print("Importing private key");
+        error = system(
+                "pkcs11-tool -l --pin 12345 --write-object ../resources/private_key.key --type privkey --id a1 --label \"My Private Key\" --usage-sign --usage-decrypt > /dev/null 2>&1");
 
-    if(error) {
-        fprintf(stderr,"Could not import public key!\n");
-        return error;
-    }
+        if (error) {
+            fprintf(stderr, "Could not import private key!\n");
+            return error;
+        }
 
-    debug_print("Importing certificate");
-    error = system("pkcs11-tool -l --pin 12345 --write-object /home/mstrharsky/diplomka/resources/cert.der --type cert --id a1");
+        debug_print("Importing public key");
+        error = system(
+                "pkcs11-tool -l --pin 12345 --write-object ../resources/public_key.key --type pubkey --id a1 --label \"My Public Key\" --usage-sign --usage-decrypt > /dev/null 2>&1");
 
-    if(error) {
-        fprintf(stderr,"Could not import public key!\n");
-        return error;
+        if (error) {
+            fprintf(stderr, "Could not import public key!\n");
+            return error;
+        }
+
+        debug_print("Importing certificate");
+        error = system(
+                "pkcs11-tool -l --pin 12345 --write-object ../resources/cert.der --type cert --id a1 > /dev/null 2>&1");
+
+        if (error) {
+            fprintf(stderr, "Could not import public key!\n");
+            return error;
+        }
     }
 
     return 0;
 }
 
-int init_token_with_default_pin(token_info *info) {
+int init_token_with_default_pin(token_info_t *info) {
 
     CK_UTF8CHAR so_pin[] = {"00000000"};
-    CK_UTF8CHAR new_pin[] = {"12345"};
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
@@ -79,8 +113,8 @@ int init_token_with_default_pin(token_info *info) {
         return 1;
     }
 
-    debug_print("Initialization of user PIN. Session handle is: %d. New PIN is: %s",info->session_handle, new_pin);
-    rv = function_pointer->C_InitPIN(info->session_handle, new_pin, sizeof(new_pin) - 1);
+    debug_print("Initialization of user PIN. Session handle is: %d. New PIN is: %s", info->session_handle, card_info.pin);
+    rv = function_pointer->C_InitPIN(info->session_handle, card_info.pin, card_info.pin_length);
     if (rv != CKR_OK) {
         fprintf(stderr,"Could not init user PIN!\n");
         return 1;
@@ -102,7 +136,7 @@ int group_setup(void **state)
     if(clear_token())
         fail_msg("Could not clear token!\n");
 
-    token_info* info = malloc(sizeof(token_info));
+    token_info_t * info = malloc(sizeof(token_info_t));
 
     assert_non_null(info);
 
@@ -118,13 +152,14 @@ int group_setup(void **state)
 int group_teardown(void **state) {
 
     debug_print("Clearing state after group tests!");
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     if(info && info->function_pointer)
         info->function_pointer->C_Finalize(NULL_PTR);
 
     free(info);
     free(library_path);
 
+    clear_card_info();
     close_pkcs11_module();
 
     return 0;
@@ -132,12 +167,10 @@ int group_teardown(void **state) {
 
 int clear_token_without_login_setup(void **state) {
 
+    token_info_t *info = (token_info_t *) *state;
+
     if(clear_token())
         fail_msg("Could not clear token!\n");
-
-    token_info *info = (token_info *) *state;
-    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
-    CK_RV rv;
 
     if(initialize_cryptoki(info)) {
         fail_msg("CRYPTOKI couldn't be initialized\n");
@@ -150,28 +183,27 @@ int clear_token_without_login_setup(void **state) {
 }
 
 int clear_token_with_user_login_setup(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
-    CK_UTF8CHAR pin[] = {"12345"};
 
     if(prepare_token(info))
         fail_msg("Could not prepare token.\n");
 
 
-    rv = function_pointer->C_Login(info->session_handle, CKU_USER, pin, sizeof(pin) - 1);
+    debug_print("Logging in to the token!");
+    rv = function_pointer->C_Login(info->session_handle, CKU_USER, card_info.pin, card_info.pin_length);
 
     if(rv != CKR_OK)
-        fail_msg("Could not login to token with user PIN '%s'\n", pin);
+        fail_msg("Could not login to token with user PIN '%s'\n", card_info.pin);
 
     return 0;
 }
 
 int clear_token_with_user_login_and_import_keys_setup(void **state) {
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
-    CK_UTF8CHAR pin[] = {"12345"};
 
     if(prepare_token(info))
         fail_msg("Could not prepare token.\n");
@@ -192,15 +224,15 @@ int clear_token_with_user_login_and_import_keys_setup(void **state) {
         fail_msg("Could not open session to token!\n");
     }
 
-    rv = function_pointer->C_Login(info->session_handle, CKU_USER, pin, sizeof(pin) - 1);
+    rv = function_pointer->C_Login(info->session_handle, CKU_USER, card_info.pin, card_info.pin_length);
 
     if(rv != CKR_OK)
-        fail_msg("Could not login to token with user PIN '%s'\n", pin);
+        fail_msg("Could not login to token with user PIN '%s'\n", card_info.pin);
 
     return 0;
 }
 
-int prepare_token(token_info *info) {
+int prepare_token(token_info_t *info) {
     if(clear_token()) {
         debug_print("Could not clear token!");
         return 1;
@@ -216,11 +248,12 @@ int prepare_token(token_info *info) {
         return 1;
     }
 
-
-    debug_print("Init token with default PIN and log in as user");
-    if(init_token_with_default_pin(info)) {
-        debug_print("Could not initialize token with default user PIN");
-        return 1;
+    if(card_info.type == PKCS15) {
+        debug_print("Init token with default PIN and log in as user");
+        if (init_token_with_default_pin(info)) {
+            debug_print("Could not initialize token with default user PIN");
+            return 1;
+        }
     }
 
     return 0;
@@ -228,7 +261,7 @@ int prepare_token(token_info *info) {
 
 int after_test_cleanup(void **state) {
 
-    token_info *info = (token_info *) *state;
+    token_info_t *info = (token_info_t *) *state;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
 
     debug_print("Logging out from token");
@@ -237,8 +270,10 @@ int after_test_cleanup(void **state) {
     info->session_handle = 0;
     debug_print("Closing all sessions");
     function_pointer->C_CloseAllSessions(info->slot_id);
+    debug_print("Finalize CRYPTOKI");
     function_pointer->C_Finalize(NULL_PTR);
 
+//    debug_print("Clearing token");
 //    if(clear_token())
 //        fail_msg("Could not clear token!\n");
 }
@@ -260,7 +295,7 @@ CK_BYTE* hex_string_to_byte_array(char* hex_string, CK_LONG *hex_array_length) {
     return hex_array;
 }
 
-int short_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism,
+int short_message_digest(const token_info_t *info, CK_MECHANISM *digest_mechanism,
                          CK_BYTE *hash, CK_ULONG *hash_length) {
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
@@ -284,7 +319,7 @@ int short_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism,
     return 0;
 }
 
-int long_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism, CK_BYTE *hash, CK_ULONG *hash_length) {
+int long_message_digest(const token_info_t *info, CK_MECHANISM *digest_mechanism, CK_BYTE *hash, CK_ULONG *hash_length) {
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
@@ -334,7 +369,7 @@ int long_message_digest(const token_info *info, CK_MECHANISM *digest_mechanism, 
     return 0;
 }
 
-int initialize_cryptoki(token_info *info) {
+int initialize_cryptoki(token_info_t *info) {
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
@@ -354,7 +389,7 @@ int initialize_cryptoki(token_info *info) {
     return 0;
 }
 
-int find_object_by_template(const token_info* info, CK_ATTRIBUTE *template, CK_OBJECT_HANDLE *object, CK_LONG attributes_count) {
+int find_object_by_template(const token_info_t * info, CK_ATTRIBUTE *template, CK_OBJECT_HANDLE *object, CK_LONG attributes_count) {
     CK_RV rv;
     CK_ULONG object_count;
 

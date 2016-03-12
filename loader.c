@@ -1,8 +1,8 @@
 #include "loader.h"
 
-int get_slot_with_card(token_info* info);
+int get_slot_with_card(token_info_t * info);
 
-int load_pkcs11_module(token_info* info, const char* path_to_pkcs11_library) {
+int load_pkcs11_module(token_info_t * info, const char* path_to_pkcs11_library) {
 
     if(strlen(path_to_pkcs11_library) == 0) {
         fprintf(stderr, "You have to specify path to PKCS#11 library.");
@@ -47,7 +47,7 @@ int load_pkcs11_module(token_info* info, const char* path_to_pkcs11_library) {
     return 0;
 }
 
-int get_slot_with_card(token_info* info)
+int get_slot_with_card(token_info_t * info)
 {
     CK_SLOT_ID_PTR slot_list;
     CK_SLOT_ID slot_id;
@@ -56,13 +56,6 @@ int get_slot_with_card(token_info* info)
     int error = 0;
 
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
-
-//    rv = function_pointer->C_Initialize(NULL_PTR);
-//
-//    if (rv != CKR_OK) {
-//        fprintf(stderr, "C_Initialize: Error = 0x%.8X\n", rv);
-//        return 1;
-//    }
 
     /* Get slot list for memory allocation */
     rv = function_pointer->C_GetSlotList(0, NULL_PTR, &slot_count);
@@ -113,7 +106,7 @@ void close_pkcs11_module() {
         dlclose(pkcs11_so);
 }
 
-void get_supported_mechanisms(supported_mechanisms *supported, CK_MECHANISM_INFO mechanism_info,CK_MECHANISM_TYPE mechanism_type) {
+void get_supported_mechanisms(supported_mechanisms_t *supported, CK_MECHANISM_INFO mechanism_info, CK_MECHANISM_TYPE mechanism_type) {
 
     if (mechanism_info.flags & CKF_GENERATE_KEY_PAIR) {
         SET_GENERATE_KEY_PAIR(supported->flags);
