@@ -40,8 +40,8 @@ int set_card_info() {
     card_info.pin_length = strlen(pin);
     card_info.id_length = sizeof(id);
 
-    card_info.pin = malloc( card_info.pin_length );
-    card_info.change_pin = malloc( card_info.pin_length );
+    card_info.pin = malloc( card_info.pin_length + 1 );
+    card_info.change_pin = malloc( card_info.pin_length + 1 );
 
 
     if(!card_info.pin || !card_info.change_pin)
