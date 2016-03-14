@@ -434,9 +434,8 @@ int read_whole_file(CK_ULONG *data_length, CK_BYTE **input_buffer, char *file_pa
     (*data_length) = ftell(fs);
     fseek(fs, 0, SEEK_SET);
 
-    *input_buffer = (char*) malloc(*data_length + 1);
+    *input_buffer = (char*) malloc(*data_length);
     fread(*input_buffer, *data_length, 1, fs);
-    (*input_buffer)[*data_length] = 0;
     fclose(fs);
 
     return 0;

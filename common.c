@@ -17,20 +17,12 @@ int set_card_info() {
     switch(card_info.type) {
         case PKCS15:
             strcpy(pin, "12345");
-            pin[strlen("12345")] = 0;
-
             strcpy(change_pin, "54321");
-            change_pin[strlen("54321")] = 0;
-
             id[0] = 0xa1;
             break;
         case PIV:
             strcpy(pin, "123456");
-            pin[strlen("123456")] = 0;
-
             strcpy(change_pin, "654321");
-            change_pin[strlen("654321")] = 0;
-
             id[0] = 0x01;
             break;
         default:
@@ -48,11 +40,7 @@ int set_card_info() {
         return 1;
 
     strcpy(card_info.pin, pin);
-    card_info.pin[card_info.pin_length] = 0;
-
     strcpy(card_info.change_pin, change_pin);
-    card_info.change_pin[card_info.pin_length] = 0;
-
     card_info.id[0] = id[0];
 
     return 0;

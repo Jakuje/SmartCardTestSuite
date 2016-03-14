@@ -1,6 +1,4 @@
-#include <getopt.h>
 #include "test_suits.h"
-#include "common.h"
 
 static void is_ec_supported_test(void **state) {
     token_info_t *info = (token_info_t *) *state;
@@ -883,12 +881,10 @@ int main(int argc, char** argv) {
             case 'm':
                 library_path = malloc(strlen(optarg) + 1);
                 strcpy(library_path,optarg);
-                library_path[strlen(optarg)] = 0;
                 args_count++;
                 break;
             case 't':
                 strcpy(card_type,optarg);
-                card_type[strlen(optarg)] = 0;
 
                 if (strcmp(optarg, "PKCS15") == 0)
                     card_info.type = PKCS15;
