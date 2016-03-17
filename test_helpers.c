@@ -1,4 +1,5 @@
 #include "test_helpers.h"
+#include "common.h"
 
 int open_session(token_info_t *info) {
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
@@ -101,13 +102,11 @@ int import_keys() {
 
 int init_token_with_default_pin(token_info_t *info) {
 
-    CK_UTF8CHAR so_pin[] = {"00000000"};
-
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_RV rv;
 
     debug_print("Logging in as SO user");
-    rv = function_pointer->C_Login(info->session_handle, CKU_SO, so_pin, sizeof(so_pin) - 1);
+    rv = function_pointer->C_Login(info->session_handle, CKU_SO, card_info.so_pin, card_info.so_pin_length);
     if (rv != CKR_OK) {
         fprintf(stderr,"Could not log in to token as SO user!\n");
         return 1;

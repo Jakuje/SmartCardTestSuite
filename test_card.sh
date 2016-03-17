@@ -1,8 +1,9 @@
 #!/bin/bash
 
 usage() { 
-	printf "\nUsage:\n\t $0 -m module_path -t [PKCS15, PIV]\n"
+	printf "\nUsage:\n\t $0 -m module_path -t [PKCS15, PIV] [-s so_pin]\n"
 	printf "\t -m  module_path:\tpath to tested module (e.g. /usr/lib64/opensc-pkcs11.so)\n"
+	printf "\t -s  so_pin:\t\tSecurity Officer PIN to token\n"
 	printf "\t -t  card_type:\t\tcard type, supported are PKCS15 and PIV\n\n"
 	exit 1; 
 }
@@ -12,10 +13,12 @@ echo "Current directory: $(pwd)"
 
 MODULE=
 TYPE=
+SO_PIN=""
+OPT_ARGS=
 TEST_APP="./SmartCardTestSuite"
 
 cd ./build
-while getopts "m:t:" o; do
+while getopts "m:t:s:" o; do
     case "${o}" in
     m)
         MODULE=${OPTARG}
@@ -30,6 +33,9 @@ while getopts "m:t:" o; do
 		    usage
 		    exit 1
 		fi
+	    ;;
+	s)
+        SO_PIN=${OPTARG}
 	    ;;
     *)
         usage
@@ -59,6 +65,14 @@ if test "$TYPE" == "PIV"; then
         exit 1
     fi
 elif test "$TYPE" == "PKCS15"; then
+
+    if test "x$SO_PIN" == "x"; then
+        echo "SO PIN has to be specified for PKCS#15 tokens"
+        exit 1
+    else
+        OPT_ARGS="-s $SO_PIN"
+    fi
+
     if ! type "pkcs15-init" > /dev/null 2>&1; then
         echo "Command line tool 'pkcs15-init' doesn't exists and has to be installed."
         exit 1
@@ -84,4 +98,4 @@ if ! test -x $TEST_APP; then
 	exit 1
 fi
 
-$TEST_APP -m $MODULE -t $TYPE
+$TEST_APP -m $MODULE -t $TYPE $OPT_ARGS

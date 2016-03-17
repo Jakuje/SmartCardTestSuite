@@ -44,10 +44,15 @@ typedef enum {
 typedef struct {
     card_type type;
     CK_UTF8CHAR* pin;
+    CK_UTF8CHAR* so_pin;
     CK_UTF8CHAR* change_pin;
-    size_t pin_length;
+
     CK_BYTE id[1];
+
+    size_t pin_length;
     size_t id_length;
+    size_t so_pin_length;
+
 } card_info_t;
 card_info_t card_info;
 
