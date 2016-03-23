@@ -1,4 +1,7 @@
 #include "test_suits.h"
+#include "common.h"
+#include <openssl/x509.h>
+#include <openssl/rsa.h>
 
 extern int readonly;
 
@@ -846,7 +849,6 @@ static void create_object_test(void **state) {
         fail_msg("Object was not created on token!\n");
 }
 
-
 static void destroy_object_test(void **state) {
 
     token_info_t *info = (token_info_t *) *state;
@@ -877,6 +879,321 @@ static void destroy_object_test(void **state) {
     if(!find_object_by_template(info, template, &certificate_handle, sizeof(template) / sizeof(CK_ATTRIBUTE))) {
         fail_msg("Certificate was not deleted from token.\n");
     }
+}
+
+char *convert_byte_string(unsigned char *id, unsigned long length)
+{
+	char *data = malloc(3 * length * sizeof(char) + 1);
+	for (int i = 0; i < length; i++)
+		sprintf(&data[i*3], "%02X:", id[i]);
+	data[length*3-1] = '\0';
+	return data;
+}
+
+typedef struct {
+	char	*key_id;
+	CK_ULONG key_id_size;
+	char	*id_str;
+	X509	*x509;
+	RSA		*rsa;
+	CK_OBJECT_HANDLE private_handle;
+	char 	*sign;
+	char	*decrypt;
+	char	*key_type;
+} test_cert_t;
+
+static void readonly_tests(void **state) {
+
+    token_info_t *info = (token_info_t *) *state;
+
+    CK_RV rv;
+    CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+    CK_ULONG object_count;
+
+    CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
+    CK_OBJECT_CLASS privateClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE template[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_ID, NULL, 0},
+    };
+	CK_LONG attributes_count = sizeof(template) / sizeof(CK_ATTRIBUTE);
+	CK_ATTRIBUTE attrs[] = {
+			//{ CKA_CERTIFICATE_TYPE, NULL_PTR, 0},
+			{ CKA_ID, NULL_PTR, 0},
+			{ CKA_VALUE, NULL_PTR, 0},
+			{ CKA_LABEL, NULL_PTR, 0},
+	};
+	CK_ATTRIBUTE private_attrs[] = {
+            { CKA_SIGN, NULL, 0},
+            { CKA_DECRYPT, NULL, 0},
+            { CKA_KEY_TYPE, NULL, 0},
+
+			/* Specific X.509 certificate attributes */
+			//{ CKA_SUBJECT, NULL_PTR, 0},
+			//{ CKA_ISSUER, NULL_PTR, 0},
+			//{ CKA_SERIAL_NUMBER, NULL_PTR, 0},
+	};
+	CK_ULONG template_size = sizeof (attrs) / sizeof (CK_ATTRIBUTE);
+
+	test_cert_t *objects = NULL;
+	unsigned int objects_size = 0;
+
+    debug_print("\nSearch for all certificates on the card");
+    rv = function_pointer->C_FindObjectsInit(info->session_handle, template, 1); // XXX search only by the first attribute!
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
+        fail_msg("Could not find certificate.\n");
+    }
+
+	while(1) {
+		/* clean up for new results openssh ssh-pkcs11.c */
+		for (int i = 0; i < template_size; i++) {
+			attrs[i].pValue = NULL;
+			attrs[i].ulValueLen = 0;
+		}
+
+		// XXX search only by the first attribute!
+		rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, 1, &object_count);
+		if (object_count == 0)
+			break;
+		if (rv != CKR_OK) {
+			fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
+ 			fail_msg("Could not find certificate.\n");
+		}
+
+		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
+												   attrs,
+												   template_size);
+		if (rv != CKR_OK) {
+			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		}
+
+		/* Allocate memory to hold the data we want */
+		for (int i = 0; i < template_size; i++) {
+			if (attrs[i].ulValueLen != 0) 
+				attrs[i].pValue = malloc(attrs[i].ulValueLen * sizeof(CK_VOID_PTR));
+
+			if (attrs[i].pValue == NULL) {
+				for (int j = 0; j < i; j++)
+					free(attrs[j].pValue);
+			}
+		}
+
+		/* Call again to get actual attributes */
+		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
+												   attrs,
+												   template_size);
+
+		objects_size = (object_count > objects_size+1 ? object_count : objects_size+1);
+		objects = realloc(objects, objects_size*sizeof(test_cert_t));
+
+		if (rv != CKR_OK || objects == NULL) {
+			for (int j = 0; j < template_size; j++)
+				free(attrs[j].pValue);
+			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		}
+
+		/* get the type and data, store in some structure */
+		int o = objects_size - 1;
+		objects[o].key_id = attrs[0].pValue;
+		objects[o].key_id_size = attrs[0].ulValueLen;
+		objects[o].id_str = convert_byte_string(objects[o].key_id, objects[o].key_id_size);
+		// XXX malloc
+		objects[o].private_handle = 0;
+		if ((objects[o].x509 = X509_new()) == NULL) {
+			fail_msg("X509_new");
+		} else if(d2i_X509(&(objects[o].x509), (const unsigned char **) &(attrs[1].pValue), attrs[1].ulValueLen) == NULL) {
+			fail_msg("d2i_X509");
+		}
+		/* XXX X509_get_pubkey */
+		debug_print(" [ OK %s ] Certificate with label %s loaded successfully",
+			objects[o].id_str, attrs[2].pValue);
+	}
+
+    rv = function_pointer->C_FindObjectsFinal(info->session_handle);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
+ 		fail_msg("Could not find certificate.\n");
+    }
+
+
+	/* do the same shit with private keys (collect handles based on the collected IDs) */
+    debug_print("\nSearch for all private keys respective to the certificates");
+	template[0].pValue = &privateClass;
+	for (int i = 0; i < objects_size; i++) {
+		template[1].pValue = objects[i].key_id;
+		template[1].ulValueLen = objects[i].key_id_size;
+		rv = function_pointer->C_FindObjectsInit(info->session_handle, template, attributes_count);
+		if (rv != CKR_OK) {
+			fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
+			fail_msg("Could not find private key.\n");
+		}
+		rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, attributes_count, &object_count); //XXX here we search by both attributes
+		if (object_count == 0)
+			debug_print("Could not find corespoing private key for certificate with ID=%s",
+				objects[i].id_str);
+		if (rv != CKR_OK) {
+			fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
+ 			fail_msg("Could not find private keys.\n");
+		}
+
+		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
+												   private_attrs,
+												   template_size);
+		if (rv != CKR_OK) {
+			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		}
+
+		/* Allocate memory to hold the data we want */
+		for (int i = 0; i < template_size; i++) {
+			if (private_attrs[i].ulValueLen != 0) 
+				private_attrs[i].pValue = malloc(private_attrs[i].ulValueLen * sizeof(CK_VOID_PTR));
+
+			if (private_attrs[i].pValue == NULL) {
+				for (int j = 0; j < i; j++)
+					free(private_attrs[j].pValue);
+			}
+		}
+
+		/* Call again to get actual attributes */
+		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
+												   private_attrs,
+												   template_size);
+
+		/* store the handle for later */
+		objects[i].private_handle = object_handle;
+		objects[i].sign = private_attrs[0].pValue;
+		objects[i].decrypt = private_attrs[1].pValue;
+		objects[i].key_type = private_attrs[2].pValue;
+
+		/* or do all the stuff here ... just for sanity? */
+		debug_print(" [ OK %s ] Private key to the certificate found successfully S:%02X D:%02X T:%02X",
+			objects[i].id_str, *objects[i].sign, *objects[i].decrypt, *objects[i].key_type);
+
+ 		rv = function_pointer->C_FindObjectsFinal(info->session_handle);
+		if (rv != CKR_OK) {
+	    	fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
+ 			fail_msg("Could not find certificate.\n");
+		}
+	}
+
+    CK_ULONG sign_length = BUFFER_SIZE;
+    CK_BYTE sign[BUFFER_SIZE];
+	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
+	CK_ULONG message_length = strlen(message);
+    CK_ULONG dec_message_length = BUFFER_SIZE;
+    CK_BYTE dec_message[BUFFER_SIZE];
+    debug_print("\nCheck functionality of Sign&Verify and/or Encrypt&Decrypt");
+	for (int i = 0; i < objects_size; i++) {
+		/* do the Sign&Verify and/or Encrypt&Decrypt */
+		int used = 0;
+		if (*objects[i].sign) {
+			// XXX different mechs based on key type
+			/*sign_mechanism.mechanism = CKM_RSA_PKCS;
+			sign_mechanism.pParameter = NULL;
+			sign_mechanism.ulParameterLen = 0;*/
+			EVP_PKEY *evp = X509_get_pubkey(objects[i].x509);
+			if (evp == NULL) {
+				fail_msg("X509_get_pubkey failed.");
+			}
+			RSA *rsa = RSAPublicKey_dup(evp->pkey.rsa);
+			if (rsa == NULL) {
+				fail_msg("RSAPublicKey_dup failed");
+			}
+
+			debug_print(" [ INFO %s ] Signing message", objects[i].id_str);
+
+			rv = function_pointer->C_SignInit(info->session_handle, &sign_mechanism,
+				objects[i].private_handle);
+			if (rv == CKR_KEY_TYPE_INCONSISTENT) {
+				debug_print(" [ SKIP %s ] Not allowed to sign with this key", objects[i].id_str);
+				continue; // XXX skips all the key even for decrypt
+			}
+			if (rv != CKR_OK) {
+				fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
+			}
+
+			rv = function_pointer->C_Sign(info->session_handle, message, message_length,
+										  sign, &sign_length);
+			if (rv != CKR_OK) {
+				fail_msg("C_Sign: rv = 0x%.8X\n", rv);
+			}
+
+			debug_print(" [ INFO %s ] Verify message sinature", objects[i].id_str);
+			int dec_message_length = RSA_public_decrypt(sign_length, sign, dec_message, rsa,
+				RSA_PKCS1_PADDING);
+			if (dec_message_length < 0) {
+				fail_msg("RSA_public_decrypt: rv = 0x%.8X\n", dec_message_length);
+			}
+			dec_message[dec_message_length] = '\0';
+			if (memcmp(dec_message, message, dec_message_length) == 0) {
+				debug_print(" [ OK %s ] Signature is valid.", objects[i].id_str);
+			} else {
+				debug_print(" [ ERROR %s ] Signature is not valid. Recovered text: %s",
+					objects[i].id_str, dec_message);
+			}
+			used = 1;
+		}
+
+		if (*objects[i].decrypt) {
+			EVP_PKEY *evp = X509_get_pubkey(objects[i].x509);
+			if (evp == NULL) {
+				fail_msg("X509_get_pubkey failed.");
+			}
+			RSA *rsa = RSAPublicKey_dup(evp->pkey.rsa);
+			if (rsa == NULL) {
+				fail_msg("RSAPublicKey_dup failed");
+			}
+
+			debug_print(" [ INFO %s ] Encrypt message", objects[i].id_str);
+			char *enc_message = malloc(RSA_size(rsa));
+			int enc_message_length = RSA_public_encrypt(message_length, message, enc_message, rsa,
+				RSA_PKCS1_PADDING);
+			if (enc_message_length < 0) {
+				fail_msg("RSA_public_encrypt: rv = 0x%.8X\n", enc_message_length);
+			}
+
+			debug_print(" [ INFO %s ] Decrypt message", objects[i].id_str);
+			rv = function_pointer->C_DecryptInit(info->session_handle, &sign_mechanism,
+				objects[i].private_handle);
+			if (rv == CKR_KEY_TYPE_INCONSISTENT) {
+				debug_print(" [ SKIP %s ] Not allowed to decrypt with this key", objects[i].id_str);
+				continue;
+			}
+			if (rv != CKR_OK) {
+				fail_msg("C_DecryptInit: rv = 0x%.8X\n", rv);
+			}
+
+			rv = function_pointer->C_Decrypt(info->session_handle, enc_message, enc_message_length,
+										  dec_message, &dec_message_length);
+			if (rv == CKR_USER_NOT_LOGGED_IN) {
+				debug_print(" [ SKIP %s ] Not allowed to decrypt with this key", objects[i].id_str);
+				continue;
+			}
+			if (rv != CKR_OK) {
+				fail_msg("C_Decrypt: rv = 0x%.8X\n", rv);
+			}
+
+			dec_message[dec_message_length] = '\0';
+			if (memcmp(dec_message, message, dec_message_length) == 0) {
+				debug_print(" [ OK %s ] Text decrypted successfully.", objects[i].id_str);
+			} else {
+				debug_print(" [ ERROR %s ] Text decryption failed. Recovered text: %s",
+					objects[i].id_str, dec_message);
+			}
+			used = 1;
+		}
+
+		if (!used) {
+			debug_print(" [ WARN %s ] Private key with unknown purpose T:%02X",
+			objects[i].id_str, *objects[i].key_type);
+		}
+	}
+
+
+    debug_print("The functionallity of the keys on the card was verified");
 }
 
 int main(int argc, char** argv) {
@@ -934,10 +1251,16 @@ int main(int argc, char** argv) {
            card_info.pin, card_info.change_pin, card_info.pin_length, card_info.id[0], card_info.id_length);
 
     const struct CMUnitTest readonly_tests_without_initialization[] = {
-            cmocka_unit_test(get_all_mechanisms_test),
+            //cmocka_unit_test(get_all_mechanisms_test),
             cmocka_unit_test(is_ec_supported_test),
 
-// TODO global pin or something
+			/* Complex readonly test of all objects on the card  */
+            cmocka_unit_test_setup_teardown(readonly_tests, clear_token_with_user_login_setup, after_test_cleanup),
+			};
+    const struct CMUnitTest readonly_tests_without_initialization_others[] = {
+
+            /* User PIN tests */
+            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
 
             /* Sign and Verify tests */
             cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_setup, after_test_cleanup),
