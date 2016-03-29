@@ -897,33 +897,253 @@ typedef struct {
 	X509	*x509;
 	RSA		*rsa;
 	CK_OBJECT_HANDLE private_handle;
-	char 	*sign;
-	char	*decrypt;
+	int 	 sign;
+	int		 decrypt;
+	int 	 sign_works;
+	int		 decrypt_works;
 	char	*key_type;
 } test_cert_t;
+
+int encrypt_decrypt_test(test_cert_t *o, token_info_t *info)
+{
+    CK_RV rv;
+	// XXX different mechs based on key type
+	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
+	CK_ULONG message_length = strlen(message);
+    CK_BYTE dec_message[BUFFER_SIZE];
+	CK_ULONG dec_message_length;
+
+	debug_print(" [ KEY %s ] Encrypt message", o->id_str);
+	char *enc_message = malloc(RSA_size(o->rsa));
+	if (enc_message == NULL)
+		fail_msg("malloc returned null");
+
+	int enc_message_length = RSA_public_encrypt(message_length, message, enc_message, o->rsa,
+		RSA_PKCS1_PADDING);
+	if (enc_message_length < 0) {
+		free(enc_message);
+		fail_msg("RSA_public_encrypt: rv = 0x%.8X\n", enc_message_length);
+	}
+
+	debug_print(" [ KEY %s ] Decrypt message", o->id_str);
+	rv = info->function_pointer->C_DecryptInit(info->session_handle, &sign_mechanism,
+		o->private_handle);
+	if (rv == CKR_KEY_TYPE_INCONSISTENT) {
+		debug_print(" [ SKIP %s ] Not allowed to decrypt with this key?", o->id_str);
+		free(enc_message);
+		return 0;
+	}
+	if (rv != CKR_OK)
+		fail_msg("C_DecryptInit: rv = 0x%.8X\n", rv);
+
+	rv = info->function_pointer->C_Decrypt(info->session_handle, enc_message, enc_message_length,
+								  dec_message, &dec_message_length);
+	free(enc_message);
+	if (rv == CKR_USER_NOT_LOGGED_IN) {
+		debug_print(" [ SKIP %s ] Not allowed to decrypt with this key?", o->id_str);
+		return 0;
+	} else if (rv != CKR_OK)
+		fail_msg("C_Decrypt: rv = 0x%.8X\n", rv);
+
+	dec_message[dec_message_length] = '\0';
+	if (memcmp(dec_message, message, dec_message_length) == 0
+			&& dec_message_length == message_length) {
+		debug_print(" [ OK %s ] Text decrypted successfully.", o->id_str);
+		o->decrypt_works = 1;
+	} else {
+		debug_print(" [ ERROR %s ] Text decryption failed. Recovered text: %s",
+			o->id_str, dec_message);
+		return 0;
+	}
+	return 1;
+}
+
+int sign_verify_test(test_cert_t *o, token_info_t *info)
+{
+    CK_RV rv;
+	// XXX different mechs based on key type
+	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
+	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
+	CK_ULONG message_length = strlen(message);
+    CK_BYTE sign[BUFFER_SIZE];
+    CK_ULONG sign_length = BUFFER_SIZE;
+    CK_BYTE dec_message[BUFFER_SIZE];
+
+	/*sign_mechanism.mechanism = CKM_RSA_PKCS;
+	sign_mechanism.pParameter = NULL;
+	sign_mechanism.ulParameterLen = 0;*/
+
+	debug_print(" [ KEY %s ] Signing message", o->id_str);
+
+	rv = info->function_pointer->C_SignInit(info->session_handle, &sign_mechanism,
+		o->private_handle);
+	if (rv == CKR_KEY_TYPE_INCONSISTENT) {
+		debug_print(" [ SKIP %s ] Not allowed to sign with this key?", o->id_str);
+		return 0;
+	} else if (rv != CKR_OK)
+		fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
+
+	rv = info->function_pointer->C_Sign(info->session_handle, message, message_length,
+								  sign, &sign_length);
+	if (rv != CKR_OK)
+		fail_msg("C_Sign: rv = 0x%.8X\n", rv);
+
+	debug_print(" [ KEY %s ] Verify message sinature", o->id_str);
+	int dec_message_length = RSA_public_decrypt(sign_length, sign, dec_message, o->rsa,
+		RSA_PKCS1_PADDING);
+	if (dec_message_length < 0)
+		fail_msg("RSA_public_decrypt: rv = 0x%.8X\n", dec_message_length);
+
+	dec_message[dec_message_length] = '\0';
+	if (memcmp(dec_message, message, dec_message_length) == 0
+			&& dec_message_length == message_length) {
+		debug_print(" [ OK %s ] Signature is valid.", o->id_str);
+		o->sign_works = 1;
+	 } else {
+		debug_print(" [ ERROR %s ] Signature is not valid. Recovered text: %s",
+			o->id_str, dec_message);
+		return 0;
+	}
+	return 1;
+}
+
+int search_objects(test_cert_t **objects, unsigned int *objects_size, token_info_t *info,
+	CK_ATTRIBUTE filter[], CK_LONG filter_size, CK_ATTRIBUTE template[], CK_LONG template_size,
+	int (*callback)(test_cert_t **, unsigned int *, CK_ATTRIBUTE[], unsigned int))
+{
+    CK_RV rv;
+    CK_FUNCTION_LIST_PTR fp = info->function_pointer;
+	CK_ULONG object_count;
+    CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
+
+    rv = fp->C_FindObjectsInit(info->session_handle, filter, filter_size);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
+		return -1;
+    }
+
+	while(1) {
+		/* clean up for new results openssh ssh-pkcs11.c */
+		for (int i = 0; i < template_size; i++) {
+			template[i].pValue = NULL;
+			template[i].ulValueLen = 0;
+		}
+
+		rv = fp->C_FindObjects(info->session_handle, &object_handle, 1, &object_count);
+		if (object_count == 0)
+			break;
+		if (rv != CKR_OK) {
+			fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
+			return -1;
+		}
+
+		rv = fp->C_GetAttributeValue(info->session_handle, object_handle,
+			template, template_size);
+		if (rv != CKR_OK) {
+			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		}
+
+		/* Allocate memory to hold the data we want */
+		for (int i = 0; i < template_size; i++)
+			if (template[i].ulValueLen != 0) {
+				template[i].pValue = malloc(template[i].ulValueLen);
+
+				if (template[i].pValue == NULL) {
+					for (int j = 0; j < i; j++)
+						free(template[j].pValue);
+					fail_msg("malloc failed");
+				}
+			}
+
+		/* Call again to get actual attributes */
+		rv = fp->C_GetAttributeValue(info->session_handle, object_handle,
+			template, template_size);
+		if (rv != CKR_OK) {
+			for (int j = 0; j < template_size; j++)
+				free(template[j].pValue);
+			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		}
+
+
+		callback(objects, objects_size, template, template_size);
+		//callback_certificates(objects, objects_size, template, template_size);
+		// XXX check results
+		for (int i = 0; i < template_size; i++)
+			free(template[i].pValue); // XXX broken???
+	}
+
+    rv = fp->C_FindObjectsFinal(info->session_handle);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
+ 		fail_msg("Could not find certificate.\n");
+    }
+}
+
+int callback_certificates(test_cert_t **objects, unsigned int *objects_size,
+	CK_ATTRIBUTE template[], unsigned int template_size)
+{
+	EVP_PKEY *evp;
+	*objects_size = *objects_size+1;
+	*objects = realloc(*objects, *objects_size*sizeof(test_cert_t));
+	const u_char *cp;
+
+	if (*objects == NULL)
+		return -1;
+
+	test_cert_t *o = *objects + *objects_size - 1;
+
+	/* get the type and data, store in some structure */
+	o->key_id = malloc(template[0].ulValueLen);
+	o->key_id = strndup(template[0].pValue, template[0].ulValueLen);
+	o->key_id_size = template[0].ulValueLen;
+	o->id_str = convert_byte_string(o->key_id, o->key_id_size);
+	// XXX malloc
+	o->private_handle = 0;
+	o->sign_works = 0;
+	o->decrypt_works = 0;
+	cp = template[1].pValue;
+	if ((o->x509 = X509_new()) == NULL) {
+		fail_msg("X509_new");
+	} else if (d2i_X509(&(o->x509), (const unsigned char **) &cp,
+			template[1].ulValueLen) == NULL) {
+		fail_msg("d2i_X509");
+	} else if ((evp = X509_get_pubkey(o->x509)) == NULL) {
+		fail_msg("X509_get_pubkey failed.");
+	} else if ((o->rsa = RSAPublicKey_dup(evp->pkey.rsa)) == NULL) {
+		fail_msg("RSAPublicKey_dup failed");
+	}
+
+	debug_print(" [ OK %s ] Certificate with label %s loaded successfully",
+		o->id_str, template[2].pValue);
+	return 1;
+}
+
+
 
 static void readonly_tests(void **state) {
 
     token_info_t *info = (token_info_t *) *state;
 
     CK_RV rv;
-    CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
     CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
     CK_ULONG object_count;
 
     CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
     CK_OBJECT_CLASS privateClass = CKO_PRIVATE_KEY;
-    CK_ATTRIBUTE template[] = {
+    CK_OBJECT_CLASS publicClass = CKO_PUBLIC_KEY;
+    CK_ATTRIBUTE filter[] = {
             {CKA_CLASS, &keyClass, sizeof(keyClass)},
             {CKA_ID, NULL, 0},
     };
-	CK_LONG attributes_count = sizeof(template) / sizeof(CK_ATTRIBUTE);
+	CK_LONG attributes_count = sizeof(filter) / sizeof(CK_ATTRIBUTE);
 	CK_ATTRIBUTE attrs[] = {
-			//{ CKA_CERTIFICATE_TYPE, NULL_PTR, 0},
 			{ CKA_ID, NULL_PTR, 0},
 			{ CKA_VALUE, NULL_PTR, 0},
 			{ CKA_LABEL, NULL_PTR, 0},
+			//{ CKA_CERTIFICATE_TYPE, NULL_PTR, 0},
 	};
+	CK_ULONG attrs_size = sizeof (attrs) / sizeof (CK_ATTRIBUTE);
 	CK_ATTRIBUTE private_attrs[] = {
             { CKA_SIGN, NULL, 0},
             { CKA_DECRYPT, NULL, 0},
@@ -934,102 +1154,38 @@ static void readonly_tests(void **state) {
 			//{ CKA_ISSUER, NULL_PTR, 0},
 			//{ CKA_SERIAL_NUMBER, NULL_PTR, 0},
 	};
-	CK_ULONG template_size = sizeof (attrs) / sizeof (CK_ATTRIBUTE);
+	CK_ULONG private_attrs_size = sizeof (private_attrs) / sizeof (CK_ATTRIBUTE);
+
+    CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
 
 	test_cert_t *objects = NULL;
 	unsigned int objects_size = 0;
 
     debug_print("\nSearch for all certificates on the card");
-    rv = function_pointer->C_FindObjectsInit(info->session_handle, template, 1); // XXX search only by the first attribute!
-    if (rv != CKR_OK) {
-        fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
-        fail_msg("Could not find certificate.\n");
-    }
-
-	while(1) {
-		/* clean up for new results openssh ssh-pkcs11.c */
-		for (int i = 0; i < template_size; i++) {
-			attrs[i].pValue = NULL;
-			attrs[i].ulValueLen = 0;
-		}
-
-		// XXX search only by the first attribute!
-		rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, 1, &object_count);
-		if (object_count == 0)
-			break;
-		if (rv != CKR_OK) {
-			fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
- 			fail_msg("Could not find certificate.\n");
-		}
-
-		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
-												   attrs,
-												   template_size);
-		if (rv != CKR_OK) {
-			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
-		}
-
-		/* Allocate memory to hold the data we want */
-		for (int i = 0; i < template_size; i++) {
-			if (attrs[i].ulValueLen != 0) 
-				attrs[i].pValue = malloc(attrs[i].ulValueLen * sizeof(CK_VOID_PTR));
-
-			if (attrs[i].pValue == NULL) {
-				for (int j = 0; j < i; j++)
-					free(attrs[j].pValue);
-			}
-		}
-
-		/* Call again to get actual attributes */
-		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
-												   attrs,
-												   template_size);
-
-		objects_size = (object_count > objects_size+1 ? object_count : objects_size+1);
-		objects = realloc(objects, objects_size*sizeof(test_cert_t));
-
-		if (rv != CKR_OK || objects == NULL) {
-			for (int j = 0; j < template_size; j++)
-				free(attrs[j].pValue);
-			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
-		}
-
-		/* get the type and data, store in some structure */
-		int o = objects_size - 1;
-		objects[o].key_id = attrs[0].pValue;
-		objects[o].key_id_size = attrs[0].ulValueLen;
-		objects[o].id_str = convert_byte_string(objects[o].key_id, objects[o].key_id_size);
-		// XXX malloc
-		objects[o].private_handle = 0;
-		if ((objects[o].x509 = X509_new()) == NULL) {
-			fail_msg("X509_new");
-		} else if(d2i_X509(&(objects[o].x509), (const unsigned char **) &(attrs[1].pValue), attrs[1].ulValueLen) == NULL) {
-			fail_msg("d2i_X509");
-		}
-		/* XXX X509_get_pubkey */
-		debug_print(" [ OK %s ] Certificate with label %s loaded successfully",
-			objects[o].id_str, attrs[2].pValue);
-	}
-
-    rv = function_pointer->C_FindObjectsFinal(info->session_handle);
-    if (rv != CKR_OK) {
-        fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
- 		fail_msg("Could not find certificate.\n");
-    }
+	search_objects(&objects, &objects_size, info, filter, 1, attrs, attrs_size, callback_certificates);
 
 
 	/* do the same shit with private keys (collect handles based on the collected IDs) */
     debug_print("\nSearch for all private keys respective to the certificates");
-	template[0].pValue = &privateClass;
+	filter[0].pValue = &privateClass;
+	// search for all and pair on the fly
+	// search_objects(&objects, info, template, 1, private_attrs, template_size, scallback_private_keys);
+	// XXX
+	//filter[0].pValue = &publicClass;
+	//search_objects(&objects, info, template, 1, private_attr, template_size, callback_public_keys);
+	// TODO
 	for (int i = 0; i < objects_size; i++) {
-		template[1].pValue = objects[i].key_id;
-		template[1].ulValueLen = objects[i].key_id_size;
-		rv = function_pointer->C_FindObjectsInit(info->session_handle, template, attributes_count);
+		for (int j = 0; j < private_attrs_size; j++)
+			private_attrs[j].pValue = NULL;
+
+		filter[1].pValue = objects[i].key_id;
+		filter[1].ulValueLen = objects[i].key_id_size;
+		rv = function_pointer->C_FindObjectsInit(info->session_handle, filter, attributes_count);
 		if (rv != CKR_OK) {
 			fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
 			fail_msg("Could not find private key.\n");
 		}
-		rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, attributes_count, &object_count); //XXX here we search by both attributes
+		rv = function_pointer->C_FindObjects(info->session_handle, &object_handle, attributes_count, &object_count); //XXX here we search by both attributes in template
 		if (object_count == 0)
 			debug_print("Could not find corespoing private key for certificate with ID=%s",
 				objects[i].id_str);
@@ -1040,36 +1196,37 @@ static void readonly_tests(void **state) {
 
 		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
 												   private_attrs,
-												   template_size);
+												   private_attrs_size);
 		if (rv != CKR_OK) {
 			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
 		}
 
 		/* Allocate memory to hold the data we want */
-		for (int i = 0; i < template_size; i++) {
-			if (private_attrs[i].ulValueLen != 0) 
-				private_attrs[i].pValue = malloc(private_attrs[i].ulValueLen * sizeof(CK_VOID_PTR));
-
-			if (private_attrs[i].pValue == NULL) {
-				for (int j = 0; j < i; j++)
-					free(private_attrs[j].pValue);
+		for (int j = 0; j < private_attrs_size; j++) {
+			if (private_attrs[j].ulValueLen != 0) {
+				private_attrs[j].pValue = malloc(private_attrs[j].ulValueLen);
+			
+				if (private_attrs[j].pValue == NULL)
+					for (int k = 0; k < i; k++)
+						free(private_attrs[k].pValue);
 			}
 		}
 
 		/* Call again to get actual attributes */
 		rv = function_pointer->C_GetAttributeValue(info->session_handle, object_handle,
 												   private_attrs,
-												   template_size);
+												   private_attrs_size);
 
 		/* store the handle for later */
 		objects[i].private_handle = object_handle;
-		objects[i].sign = private_attrs[0].pValue;
-		objects[i].decrypt = private_attrs[1].pValue;
+		objects[i].sign = private_attrs[0].ulValueLen ? *((char *) private_attrs[0].pValue) : 0;
+		objects[i].decrypt = private_attrs[1].ulValueLen ? *((char *) private_attrs[1].pValue) : 0;
 		objects[i].key_type = private_attrs[2].pValue;
+		for (int j = 0; j < 2; j++)
+			free(private_attrs[j].pValue);
 
-		/* or do all the stuff here ... just for sanity? */
-		debug_print(" [ OK %s ] Private key to the certificate found successfully S:%02X D:%02X T:%02X",
-			objects[i].id_str, *objects[i].sign, *objects[i].decrypt, *objects[i].key_type);
+		debug_print(" [ OK %s ] Private key to the certificate found successfully S:%d D:%d T:%02X",
+			objects[i].id_str, objects[i].sign, objects[i].decrypt, *objects[i].key_type);
 
  		rv = function_pointer->C_FindObjectsFinal(info->session_handle);
 		if (rv != CKR_OK) {
@@ -1078,113 +1235,16 @@ static void readonly_tests(void **state) {
 		}
 	}
 
-    CK_ULONG sign_length = BUFFER_SIZE;
-    CK_BYTE sign[BUFFER_SIZE];
-	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
-	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
-	CK_ULONG message_length = strlen(message);
-    CK_ULONG dec_message_length = BUFFER_SIZE;
-    CK_BYTE dec_message[BUFFER_SIZE];
+	int used;
     debug_print("\nCheck functionality of Sign&Verify and/or Encrypt&Decrypt");
 	for (int i = 0; i < objects_size; i++) {
+		used = 0;
 		/* do the Sign&Verify and/or Encrypt&Decrypt */
-		int used = 0;
-		if (*objects[i].sign) {
-			// XXX different mechs based on key type
-			/*sign_mechanism.mechanism = CKM_RSA_PKCS;
-			sign_mechanism.pParameter = NULL;
-			sign_mechanism.ulParameterLen = 0;*/
-			EVP_PKEY *evp = X509_get_pubkey(objects[i].x509);
-			if (evp == NULL) {
-				fail_msg("X509_get_pubkey failed.");
-			}
-			RSA *rsa = RSAPublicKey_dup(evp->pkey.rsa);
-			if (rsa == NULL) {
-				fail_msg("RSAPublicKey_dup failed");
-			}
+		if (objects[i].sign)
+			used |= sign_verify_test(&objects[i], info);
 
-			debug_print(" [ INFO %s ] Signing message", objects[i].id_str);
-
-			rv = function_pointer->C_SignInit(info->session_handle, &sign_mechanism,
-				objects[i].private_handle);
-			if (rv == CKR_KEY_TYPE_INCONSISTENT) {
-				debug_print(" [ SKIP %s ] Not allowed to sign with this key", objects[i].id_str);
-				continue; // XXX skips all the key even for decrypt
-			}
-			if (rv != CKR_OK) {
-				fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
-			}
-
-			rv = function_pointer->C_Sign(info->session_handle, message, message_length,
-										  sign, &sign_length);
-			if (rv != CKR_OK) {
-				fail_msg("C_Sign: rv = 0x%.8X\n", rv);
-			}
-
-			debug_print(" [ INFO %s ] Verify message sinature", objects[i].id_str);
-			int dec_message_length = RSA_public_decrypt(sign_length, sign, dec_message, rsa,
-				RSA_PKCS1_PADDING);
-			if (dec_message_length < 0) {
-				fail_msg("RSA_public_decrypt: rv = 0x%.8X\n", dec_message_length);
-			}
-			dec_message[dec_message_length] = '\0';
-			if (memcmp(dec_message, message, dec_message_length) == 0) {
-				debug_print(" [ OK %s ] Signature is valid.", objects[i].id_str);
-			} else {
-				debug_print(" [ ERROR %s ] Signature is not valid. Recovered text: %s",
-					objects[i].id_str, dec_message);
-			}
-			used = 1;
-		}
-
-		if (*objects[i].decrypt) {
-			EVP_PKEY *evp = X509_get_pubkey(objects[i].x509);
-			if (evp == NULL) {
-				fail_msg("X509_get_pubkey failed.");
-			}
-			RSA *rsa = RSAPublicKey_dup(evp->pkey.rsa);
-			if (rsa == NULL) {
-				fail_msg("RSAPublicKey_dup failed");
-			}
-
-			debug_print(" [ INFO %s ] Encrypt message", objects[i].id_str);
-			char *enc_message = malloc(RSA_size(rsa));
-			int enc_message_length = RSA_public_encrypt(message_length, message, enc_message, rsa,
-				RSA_PKCS1_PADDING);
-			if (enc_message_length < 0) {
-				fail_msg("RSA_public_encrypt: rv = 0x%.8X\n", enc_message_length);
-			}
-
-			debug_print(" [ INFO %s ] Decrypt message", objects[i].id_str);
-			rv = function_pointer->C_DecryptInit(info->session_handle, &sign_mechanism,
-				objects[i].private_handle);
-			if (rv == CKR_KEY_TYPE_INCONSISTENT) {
-				debug_print(" [ SKIP %s ] Not allowed to decrypt with this key", objects[i].id_str);
-				continue;
-			}
-			if (rv != CKR_OK) {
-				fail_msg("C_DecryptInit: rv = 0x%.8X\n", rv);
-			}
-
-			rv = function_pointer->C_Decrypt(info->session_handle, enc_message, enc_message_length,
-										  dec_message, &dec_message_length);
-			if (rv == CKR_USER_NOT_LOGGED_IN) {
-				debug_print(" [ SKIP %s ] Not allowed to decrypt with this key", objects[i].id_str);
-				continue;
-			}
-			if (rv != CKR_OK) {
-				fail_msg("C_Decrypt: rv = 0x%.8X\n", rv);
-			}
-
-			dec_message[dec_message_length] = '\0';
-			if (memcmp(dec_message, message, dec_message_length) == 0) {
-				debug_print(" [ OK %s ] Text decrypted successfully.", objects[i].id_str);
-			} else {
-				debug_print(" [ ERROR %s ] Text decryption failed. Recovered text: %s",
-					objects[i].id_str, dec_message);
-			}
-			used = 1;
-		}
+		if (objects[i].decrypt)
+			used |= encrypt_decrypt_test(&objects[i], info);
 
 		if (!used) {
 			debug_print(" [ WARN %s ] Private key with unknown purpose T:%02X",
@@ -1192,6 +1252,13 @@ static void readonly_tests(void **state) {
 		}
 	}
 
+	/* print summary */
+	printf("[ KEY ID ] [ SIGN & VERIFY ] [ ENCRYPT & DECRYPT ]\n");
+	for (int i = 0; i < objects_size; i++) {
+		printf("[ %-6s ] [     %s      ] [        %s       ]\n",
+		objects[i].id_str, objects[i].sign_works ? " ./ " : "SKIP",
+		objects[i].decrypt_works ? " ./ " : "SKIP");
+	}
 
     debug_print("The functionallity of the keys on the card was verified");
 }
