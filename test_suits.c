@@ -929,10 +929,10 @@ int encrypt_decrypt_test(test_cert_t *o, token_info_t *info)
 	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
 	CK_ULONG message_length = strlen(message);
     CK_BYTE dec_message[BUFFER_SIZE];
-	CK_ULONG dec_message_length;
+	CK_ULONG dec_message_length = BUFFER_SIZE;
 
 	if (o->type != EVP_PK_RSA) { // XXX non-RSA key?
-			debug_print(" [ KEY %s ] Skip non-RSA key", o->id_str);
+		debug_print(" [ KEY %s ] Skip non-RSA key", o->id_str);
 		return 0;
 	}
 
@@ -1075,6 +1075,8 @@ int search_objects(test_certs_t *objects, token_info_t *info,
 		}
 		object_handles[i++] = object_handle;
 	}
+	objects_length = i; //terminate list of handles
+
     rv = fp->C_FindObjectsFinal(info->session_handle);
     if (rv != CKR_OK) {
         fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
@@ -1312,8 +1314,8 @@ static void readonly_tests(void **state) {
 			{ CKA_ID, NULL, 0},
 			{ CKA_MODULUS, NULL, 0},
 			{ CKA_PUBLIC_EXPONENT, NULL, 0},
-//			{ CKA_EC_PARAMS, NULL, 0},
-//			{ CKA_EC_POINT, NULL, 0},
+			{ CKA_EC_PARAMS, NULL, 0},
+			{ CKA_EC_POINT, NULL, 0},
 	};
 	CK_ULONG public_attrs_size = sizeof (public_attrs) / sizeof (CK_ATTRIBUTE);
 
