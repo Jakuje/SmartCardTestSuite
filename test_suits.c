@@ -2,6 +2,7 @@
 #include "common.h"
 #include <openssl/x509.h>
 #include <openssl/rsa.h>
+#include <openssl/err.h>
 
 extern int readonly;
 
@@ -1021,7 +1022,8 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 	int dec_message_length = RSA_public_decrypt(sign_length, sign, dec_message, o->key.rsa,
 		RSA_PKCS1_PADDING);
 	if (dec_message_length < 0)
-		fail_msg("RSA_public_decrypt: rv = 0x%.8X\n", dec_message_length);
+		fail_msg("RSA_public_decrypt: rv = %d: %s\n", dec_message_length,
+			ERR_error_string(ERR_peek_last_error(), NULL));
 
 	dec_message[dec_message_length] = '\0';
 	if (memcmp(dec_message, message, dec_message_length) == 0
@@ -1045,19 +1047,18 @@ int search_objects(test_certs_t *objects, token_info_t *info,
 	CK_ULONG object_count;
     CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
 
+	/* FindObjects first
+	 *  https://wiki.oasis-open.org/pkcs11/CommonBugs
+	 */
     rv = fp->C_FindObjectsInit(info->session_handle, filter, filter_size);
     if (rv != CKR_OK) {
         fprintf(stderr, "C_FindObjectsInit: rv = 0x%.8X\n", rv);
 		return -1;
     }
 
+	CK_OBJECT_HANDLE_PTR object_handles = NULL;
+	unsigned long i = 0, objects_length = 0;
 	while(1) {
-		/* clean up for new results openssh ssh-pkcs11.c */
-		for (int i = 0; i < template_size; i++) {
-			template[i].pValue = NULL;
-			template[i].ulValueLen = 0;
-		}
-
 		rv = fp->C_FindObjects(info->session_handle, &object_handle, 1, &object_count);
 		if (object_count == 0)
 			break;
@@ -1065,53 +1066,56 @@ int search_objects(test_certs_t *objects, token_info_t *info,
 			fprintf(stderr, "C_FindObjects: rv = 0x%.8X\n", rv);
 			return -1;
 		}
-
-		rv = fp->C_GetAttributeValue(info->session_handle, object_handle,
-			template, template_size);
-		if (rv == CKR_ATTRIBUTE_TYPE_INVALID) {
-			/*for (int j = 0; j < template_size; j++) {
-				if (template[i].ulValueLen == -1) 
-					template[i].ulValueLen = 0;
-			}*/
-			fprintf(stderr, "Invalid argument, probably not RSA object. Skipping ...\n");
-			//continue; // XXX skip non-RSA key
-		} else if (rv != CKR_OK)
-			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
-
-		/* Allocate memory to hold the data we want */
-		for (int i = 0; i < template_size; i++)
-			if (template[i].ulValueLen != 0) {
-				template[i].pValue = malloc(template[i].ulValueLen);
-
-				if (template[i].pValue == NULL) {
-					for (int j = 0; j < i; j++)
-						free(template[j].pValue);
-					fail_msg("malloc failed");
-				}
-			}
-
-		/* Call again to get actual attributes */
-		rv = fp->C_GetAttributeValue(info->session_handle, object_handle,
-			template, template_size);
-		if (rv != CKR_OK) {
-			for (int j = 0; j < template_size; j++)
-				free(template[j].pValue);
-			fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		/*  store handle */
+		if (i >= objects_length) {
+			objects_length += 4; // do not realloc after each row
+			object_handles = realloc(object_handles, objects_length * sizeof(CK_OBJECT_HANDLE_PTR));
+			if (object_handles == NULL)
+		 		fail_msg("Realloc failed. Need to store object handles.\n");
 		}
-
-
-		callback(objects, template, template_size, object_handle);
-		//callback_certificates(objects, template, template_size);
-		// XXX check results
-		for (int i = 0; i < template_size; i++)
-			free(template[i].pValue);
+		object_handles[i++] = object_handle;
 	}
-
     rv = fp->C_FindObjectsFinal(info->session_handle);
     if (rv != CKR_OK) {
         fprintf(stderr, "C_FindObjectsFinal: rv = 0x%.8X\n", rv);
  		fail_msg("Could not find certificate.\n");
     }
+
+	for (int i = 0;i < objects_length; i++) {
+		/* Find attributes one after another to handle errors
+		 *  https://wiki.oasis-open.org/pkcs11/CommonBugs
+		 */
+		for (int j = 0; j < template_size; j++) {
+			template[j].pValue = NULL;
+			template[j].ulValueLen = 0;
+
+			rv = fp->C_GetAttributeValue(info->session_handle, object_handles[i],
+				&(template[j]), 1);
+			if (rv == CKR_ATTRIBUTE_TYPE_INVALID)
+				continue;
+			else if (rv != CKR_OK)
+				fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+
+			/* Allocate memory to hold the data we want */
+			if (template[j].ulValueLen != 0) {
+				template[j].pValue = malloc(template[j].ulValueLen);
+				if (template[j].pValue == NULL)
+					fail_msg("malloc failed");
+			}
+			/* Call again to get actual attribute */
+			rv = fp->C_GetAttributeValue(info->session_handle, object_handles[i],
+				&(template[j]), 1);
+			if (rv != CKR_OK)
+				fail_msg("C_GetAttributeValue: rv = 0x%.8X\n", rv);
+		}
+
+		callback(objects, template, template_size, object_handles[i]);
+		//callback_certificates(objects, template, template_size);
+		// XXX check results
+		for (int j = 0; j < template_size; j++)
+			free(template[j].pValue);
+	}
+
 }
 
 /**
