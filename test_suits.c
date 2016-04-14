@@ -1017,10 +1017,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 	/* Call C_Sign with NULL argument to find out the real size of signature */
 	rv = info->function_pointer->C_Sign(info->session_handle, message, message_length,
 								  sign, &sign_length);
-	if (rv == CKR_USER_NOT_LOGGED_IN) {
-		debug_print(" [ SKIP %s ] Not allowed to sign with this key?", o->id_str);
-		return 0;
-	} else if (rv != CKR_OK)
+	if (rv != CKR_OK)
 		fail_msg("C_Sign: rv = 0x%.8X\n", rv);
 
 	sign = malloc(sign_length);
@@ -1030,7 +1027,10 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 	/* Call C_Sign with allocated buffer to the the actual signature */
 	rv = info->function_pointer->C_Sign(info->session_handle, message, message_length,
 								  sign, &sign_length);
-	if (rv != CKR_OK)
+	if (rv == CKR_USER_NOT_LOGGED_IN) {
+		debug_print(" [ SKIP %s ] Not allowed to sign with this key?", o->id_str);
+		return 0;
+	} else if (rv != CKR_OK)
 		fail_msg("C_Sign: rv = 0x%.8X\n", rv);
 
 	debug_print(" [ KEY %s ] Verify message sinature", o->id_str);
