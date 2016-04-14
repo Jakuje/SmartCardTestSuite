@@ -11,6 +11,17 @@ void display_usage() {
                     "\n");
 }
 
+int init_card_info() {
+	card_info.type = -1;
+	card_info.pin = NULL;
+	card_info.so_pin = NULL;
+	card_info.change_pin = NULL;
+	card_info.id[0] = '\0';
+	card_info.pin_length = 0;
+	card_info.so_pin_length = 0;
+	card_info.id_length = 0;
+}
+
 int set_card_info() {
 
     CK_UTF8CHAR pin[10], change_pin[10];
@@ -31,11 +42,15 @@ int set_card_info() {
             return 1;
     }
 
-    card_info.pin_length = strlen(pin);
-    card_info.id_length = sizeof(id);
+	if (card_info.pin == NULL) {
+	    card_info.pin = strdup(pin);
+		card_info.pin_length = strlen(pin);
+	}
 
-    card_info.pin = strdup(pin);
-    card_info.change_pin = strdup(change_pin);
+	if (card_info.change_pin == NULL)
+	    card_info.change_pin = strdup(change_pin);
+
+    card_info.id_length = sizeof(id);
     card_info.id[0] = id[0];
 
     if(!card_info.pin || !card_info.change_pin)

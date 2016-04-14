@@ -1435,7 +1435,9 @@ int main(int argc, char** argv) {
     char command, card_type[25];
     int args_count = 0;
 
-    while ((command = getopt(argc, argv, "m:t:s:r")) != -1) {
+	init_card_info();
+
+    while ((command = getopt(argc, argv, "m:t:p:s:r")) != -1) {
         switch (command) {
             case 'm':
                 library_path = strdup(optarg);
@@ -1454,6 +1456,10 @@ int main(int argc, char** argv) {
                     return 1;
                 }
                 args_count++;
+                break;
+            case 'p':
+                card_info.pin = strdup(optarg);
+                card_info.pin_length = strlen(optarg);
                 break;
             case 's':
                 card_info.so_pin = strdup(optarg);
