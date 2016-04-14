@@ -11,7 +11,7 @@ void display_usage() {
                     "\n");
 }
 
-int init_card_info() {
+void init_card_info() {
 	card_info.type = -1;
 	card_info.pin = NULL;
 	card_info.so_pin = NULL;
