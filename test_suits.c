@@ -996,8 +996,8 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 	sign_mechanism.ulParameterLen = 0;*/
 	if (o->type == EVP_PK_EC) {
 		sign_mechanism.mechanism = CKM_ECDSA;
-		// sha-256
-		message = "074ea7a9fc6fbe4b78a42e80f97627430b1de58c11b8d8e2f54edfbaada9f507";
+		// opensc can take only 256 bits
+		message = "01234567890123456789012345678901";
 		message_length = strlen(message);
 	} else if (o->type != EVP_PK_RSA) { // XXX non-RSA key?
 		debug_print(" [ KEY %s ] Skip non-RSA key", o->id_str);
@@ -1406,9 +1406,9 @@ static void readonly_tests(void **state) {
 	}
 
 	/* print summary */
-	printf("[KEY ID] [TYPE] [SIZE] [PUBLIC] [SIGN&VERIFY] [ENCRYPT&DECRYPT] [LABEL]\n");
+	printf("[KEY ID] [TYPE] [SIZE] [PUBLIC] [SIGN&VERIFY] [ENC&DECRYPT] [LABEL]\n");
 	for (int i = 0; i < objects.count; i++) {
-		printf("[%-6s] [%s] [%-4d] [ %s ] [%s%s%s] [%s%s    %s] [%s]\n",
+		printf("[%-6s] [%s] [%-4d] [ %s ] [%s%s%s] [%s%s%s] [%s]\n",
 		objects.data[i].id_str,
 		objects.data[i].key_type == CKK_RSA ? "RSA " :
 			objects.data[i].key_type == CKK_EC ? " EC " : " ?? ",
@@ -1422,10 +1422,10 @@ static void readonly_tests(void **state) {
 		objects.data[i].flags & VERIFY_DECRYPT ? " ./ " : "SKIP",
 		objects.data[i].label);
 	}
-	printf(" Public == Cert ----------^      ^   ^   ^     ^   ^       ^\n");
-	printf(" Sign Attribute -----------------'   |   |     |   |       '-- Enc&Dec functionality\n");
-	printf(" Verify Attribute -------------------'   |     |   '---------- Decrypt Attribute\n");
-	printf(" Sign&Verify functionality --------------'     '-------------- Encrypt functionaliy\n");
+	printf(" Public == Cert ----------^      ^   ^   ^     ^   ^   ^\n");
+	printf(" Sign Attribute -----------------'   |   |     |   |   '-- Enc&Dec functionality\n");
+	printf(" Verify Attribute -------------------'   |     |   '------ Decrypt Attribute\n");
+	printf(" Sign&Verify functionality --------------'     '---------- Encrypt functionaliy\n");
 
     debug_print("The functionallity of the keys on the card was verified");
 }
