@@ -882,6 +882,9 @@ static void destroy_object_test(void **state) {
     }
 }
 
+/******************************************************************************
+ *****************************************************************************/
+
 char *convert_byte_string(unsigned char *id, unsigned long length)
 {
 	char *data = malloc(3 * length * sizeof(char) + 1);
@@ -979,7 +982,6 @@ int encrypt_decrypt_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 			&& dec_message_length == message_length) {
 		debug_print(" [ OK %s ] Text decrypted successfully.", o->id_str);
 		mech->flags |= VERIFY_DECRYPT;
-		// XXX only mechanism for decryption
 	} else {
 		debug_print(" [ ERROR %s ] Text decryption failed. Recovered text: %s",
 			o->id_str, dec_message);
@@ -1002,7 +1004,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		// XXX opensc can take only 256 bits for CKM_ECDSA
 		message = "01234567890123456789012345678901";
 		message_length = strlen(message);
-	} else if (o->type != EVP_PK_RSA) { // XXX non-RSA key?
+	} else if (o->type != EVP_PK_RSA) {
 		debug_print(" [ KEY %s ] Skip non-RSA non-EC key", o->id_str);
 		return 0;
 	}
@@ -1021,8 +1023,8 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
 
 	/* Call C_Sign with NULL argument to find out the real size of signature */
-	rv = info->function_pointer->C_Sign(info->session_handle, message, message_length,
-								  sign, &sign_length);
+	rv = info->function_pointer->C_Sign(info->session_handle,
+		message, message_length, sign, &sign_length);
 	if (rv != CKR_OK)
 		fail_msg("C_Sign: rv = 0x%.8X\n", rv);
 
@@ -1031,13 +1033,16 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		fail_msg("malloc failed");
 
 	/* Call C_Sign with allocated buffer to the the actual signature */
-	rv = info->function_pointer->C_Sign(info->session_handle, message, message_length,
-								  sign, &sign_length);
+	rv = info->function_pointer->C_Sign(info->session_handle,
+		message, message_length, sign, &sign_length);
 	if (rv == CKR_USER_NOT_LOGGED_IN) {
 		debug_print(" [ SKIP %s ] Not allowed to sign with this key?", o->id_str);
+		free(sign);
 		return 0;
-	} else if (rv != CKR_OK)
+	} else if (rv != CKR_OK) {
+		free(sign);
 		fail_msg("C_Sign: rv = 0x%.8X\n", rv);
+	}
 
 	debug_print(" [ KEY %s ] Verify message sinature", o->id_str);
 	int dec_message_length = 0;
@@ -1045,6 +1050,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		CK_BYTE dec_message[BUFFER_SIZE];
 		dec_message_length = RSA_public_decrypt(sign_length, sign,
 			dec_message, o->key.rsa, RSA_PKCS1_PADDING);
+		free(sign);
 		if (dec_message_length < 0)
 			fail_msg("RSA_public_decrypt: rv = %d: %s\n", dec_message_length,
 				ERR_error_string(ERR_peek_last_error(), NULL));
@@ -1065,6 +1071,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		int nlen = sign_length/2;
 		BN_bin2bn(&sign[0], nlen, sig->r);
 		BN_bin2bn(&sign[nlen], nlen, sig->s);
+		free(sign);
 		if ((rv = ECDSA_do_verify(message, message_length, sig, o->key.ec)) == 1) {
 			debug_print(" [ OK %s ] EC Signature is valid.", o->id_str);
 			mech->flags |= VERIFY_SIGN;
@@ -1074,8 +1081,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		}
 		ECDSA_SIG_free(sig);
 	} else {
-		// XXX non-RSA key
-		debug_print(" [ KEY %s ] Not verifying with EC", o->id_str);
+		debug_print(" [ KEY %s ] Unknown type. Not verifying", o->id_str);
 		return 0;
 	}
 
@@ -1156,12 +1162,11 @@ int search_objects(test_certs_t *objects, token_info_t *info,
 		}
 
 		callback(objects, template, template_size, object_handles[i]);
-		//callback_certificates(objects, template, template_size);
 		// XXX check results
 		for (int j = 0; j < template_size; j++)
 			free(template[j].pValue);
 	}
-
+	free(object_handles);
 }
 
 /**
@@ -1186,11 +1191,10 @@ int callback_certificates(test_certs_t *objects,
 	o->key_id = memcpy(o->key_id, template[0].pValue, template[0].ulValueLen);
 	o->key_id_size = template[0].ulValueLen;
 	o->id_str = convert_byte_string(o->key_id, o->key_id_size);
-	// XXX malloc
 	o->private_handle = CK_INVALID_HANDLE;
 	o->bits = -1;
 	o->label = malloc(template[2].ulValueLen + 1);
-	o->label = strndup(template[2].pValue, template[2].ulValueLen);
+	strncpy(o->label, template[2].pValue, template[2].ulValueLen);
 	o->label[template[2].ulValueLen] = '\0';
 	o->verify_public = 0;
 	o->mechs = NULL;
@@ -1212,6 +1216,8 @@ int callback_certificates(test_certs_t *objects,
 
 		o->num_mechs = 1; // the only mechanism for RSA
 		o->mechs = malloc(sizeof(test_mech_t));
+		if (o->mechs == NULL)
+			fail_msg("malloc failed for mechs");
 		o->mechs[0].mech = CKM_RSA_PKCS;
 		o->mechs[0].flags = 0;
 	} else if (EVP_PKEY_base_id(evp) == EVP_PKEY_EC) {
@@ -1222,6 +1228,8 @@ int callback_certificates(test_certs_t *objects,
 
 		o->num_mechs = 2; // we expect two of them, if supported XXX
 		o->mechs = malloc(2*sizeof(test_mech_t));
+		if (o->mechs == NULL)
+			fail_msg("malloc failed for mechs");
 		o->mechs[0].mech = CKM_ECDSA;
 		o->mechs[0].flags = 0;
 		o->mechs[1].mech = CKM_ECDSA_SHA1;
@@ -1229,6 +1237,7 @@ int callback_certificates(test_certs_t *objects,
 	} else {
 		fprintf(stderr, "[ WARN %s ]evp->type =  0x%.4X (not RSA, EC)\n", o->id_str, evp->type);
 	}
+	EVP_PKEY_free(evp);
 
 	debug_print(" [ OK %s ] Certificate with label %s loaded successfully",
 		o->id_str, o->label);
@@ -1336,63 +1345,6 @@ int callback_public_keys(test_certs_t *objects,
 	debug_print(" [ OK %s ] Public key to the certificate found successfully V:%d E:%d T:%02X",
 		objects->data[i].id_str, objects->data[i].verify, objects->data[i].encrypt,
 		objects->data[i].key_type);
-}
-
-static void supported_mechanisms_test(void **state) {
-    token_info_t *info = (token_info_t *) *state;
-    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
-
-    CK_RV rv;
-    CK_LONG mechanism_count;
-    CK_MECHANISM_TYPE_PTR mechanism_list;
-    CK_MECHANISM_INFO_PTR mechanism_info;
-
-    if(initialize_cryptoki(info)) {
-        fail_msg("CRYPTOKI couldn't be initialized\n");
-    }
-
-    rv = function_pointer->C_GetMechanismList(info->slot_id, NULL_PTR, &mechanism_count);
-    assert_int_not_equal(mechanism_count,0);
-    if ((rv == CKR_OK) && (mechanism_count > 0)) {
-        mechanism_list = (CK_MECHANISM_TYPE_PTR) malloc(mechanism_count * sizeof(CK_MECHANISM_TYPE));
-        rv = function_pointer->C_GetMechanismList(info->slot_id, mechanism_list, &mechanism_count);
-        if (rv != CKR_OK) {
-            free(mechanism_list);
-            function_pointer->C_Finalize(NULL_PTR);
-            fail_msg("Could not get mechanism list!\n");
-        }
-        assert_non_null(mechanism_list);
-
-        mechanism_info = (CK_MECHANISM_INFO_PTR) malloc(mechanism_count * sizeof(CK_MECHANISM_INFO));
-
-        for(int i=0; i< mechanism_count; i++) {
-            CK_MECHANISM_TYPE mechanism_type = mechanism_list[i];
-            rv = function_pointer->C_GetMechanismInfo(info->slot_id,
-				mechanism_type, &mechanism_info[i]);
-
-            if(rv != CKR_OK){
-                continue;
-            }
-        }
-
-		printf("[    MECHANISM    ] [ KEY SIZE ] [  FLAGS   ]\n");
-		printf("[                 ] [ MIN][ MAX] [          ]\n");
-        for(int i = 0; i < mechanism_count; i++) {
-			printf("[%-17s] [%4lu][%4lu] [%10s]", get_mechanism_name(mechanism_list[i]),
-				mechanism_info[i].ulMinKeySize, mechanism_info[i].ulMaxKeySize,
-				get_mechanism_flag_name(mechanism_info[i].flags));
-			for (CK_FLAGS j = 1; j <= CKF_EC_COMPRESS; j = j<<1)
-				if ((mechanism_info[i].flags & j) != 0)
-					printf(" %s", get_mechanism_flag_name(j));
-			printf("\n");
-		}
-        free(mechanism_list);
-    }
-
-    rv = function_pointer->C_Finalize(NULL_PTR);
-    if(rv != CKR_OK){
-        fail_msg("Could not finalize CRYPTOKI!\n");
-    }
 }
 
 static void sign_verify_tests(void **state) {
@@ -1514,7 +1466,76 @@ static void sign_verify_tests(void **state) {
 	printf(" Sign&Verify functionality ----------'  |       |  '------- Enc&Dec functionality\n");
 	printf(" Verify Attribute ----------------------'       '---------- Encrypt functionaliy\n");
 
-    debug_print("The functionallity of the keys on the card was verified");
+	for (int i = 0; i < objects.count; i++) {
+		free(objects.data[i].key_id);
+		free(objects.data[i].id_str);
+		free(objects.data[i].label);
+		free(objects.data[i].mechs);
+		X509_free(objects.data[i].x509);
+		if (objects.data[i].key_type == CKK_RSA)
+			RSA_free(objects.data[i].key.rsa);
+		else
+			EC_KEY_free(objects.data[i].key.ec);
+	}
+	free(objects.data);
+}
+
+static void supported_mechanisms_test(void **state) {
+    token_info_t *info = (token_info_t *) *state;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_RV rv;
+    CK_LONG mechanism_count;
+    CK_MECHANISM_TYPE_PTR mechanism_list;
+    CK_MECHANISM_INFO_PTR mechanism_info;
+
+    if(initialize_cryptoki(info)) {
+        fail_msg("CRYPTOKI couldn't be initialized\n");
+    }
+
+    rv = function_pointer->C_GetMechanismList(info->slot_id, NULL_PTR, &mechanism_count);
+    assert_int_not_equal(mechanism_count,0);
+    if ((rv == CKR_OK) && (mechanism_count > 0)) {
+        mechanism_list = (CK_MECHANISM_TYPE_PTR) malloc(mechanism_count * sizeof(CK_MECHANISM_TYPE));
+        rv = function_pointer->C_GetMechanismList(info->slot_id, mechanism_list, &mechanism_count);
+        if (rv != CKR_OK) {
+            free(mechanism_list);
+            function_pointer->C_Finalize(NULL_PTR);
+            fail_msg("Could not get mechanism list!\n");
+        }
+        assert_non_null(mechanism_list);
+
+        mechanism_info = (CK_MECHANISM_INFO_PTR) malloc(mechanism_count * sizeof(CK_MECHANISM_INFO));
+
+        for(int i=0; i< mechanism_count; i++) {
+            CK_MECHANISM_TYPE mechanism_type = mechanism_list[i];
+            rv = function_pointer->C_GetMechanismInfo(info->slot_id,
+				mechanism_type, &mechanism_info[i]);
+
+            if(rv != CKR_OK){
+                continue;
+            }
+        }
+
+		printf("[    MECHANISM    ] [ KEY SIZE ] [  FLAGS   ]\n");
+		printf("[                 ] [ MIN][ MAX] [          ]\n");
+        for(int i = 0; i < mechanism_count; i++) {
+			printf("[%-17s] [%4lu][%4lu] [%10s]", get_mechanism_name(mechanism_list[i]),
+				mechanism_info[i].ulMinKeySize, mechanism_info[i].ulMaxKeySize,
+				get_mechanism_flag_name(mechanism_info[i].flags));
+			for (CK_FLAGS j = 1; j <= CKF_EC_COMPRESS; j = j<<1)
+				if ((mechanism_info[i].flags & j) != 0)
+					printf(" %s", get_mechanism_flag_name(j));
+			printf("\n");
+		}
+        free(mechanism_list);
+        free(mechanism_info);
+    }
+
+    rv = function_pointer->C_Finalize(NULL_PTR);
+    if(rv != CKR_OK){
+        fail_msg("Could not finalize CRYPTOKI!\n");
+    }
 }
 
 int main(int argc, char** argv) {
@@ -1584,31 +1605,6 @@ int main(int argc, char** argv) {
             cmocka_unit_test_setup_teardown(sign_verify_tests,
 				clear_token_with_user_login_setup, after_test_cleanup),
 			};
-    const struct CMUnitTest readonly_tests_without_initialization_others[] = {
-
-            /* User PIN tests */
-            cmocka_unit_test_setup_teardown(initialize_token_with_user_pin_test, clear_token_without_login_setup, after_test_cleanup),
-
-            /* Sign and Verify tests */
-            cmocka_unit_test_setup_teardown(sign_message_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(verify_signed_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup), // TODO C_Verify fails
-
-            /* Decryption tests */
-//            cmocka_unit_test_setup_teardown(decrypt_encrypted_message_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup), // we don't know the private key
-
-            /* Find objects tests */
-            cmocka_unit_test_setup_teardown(find_all_objects_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(find_object_according_to_template_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-            cmocka_unit_test_setup_teardown(find_object_and_read_attributes_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-
-            /* Generate random data tests */
-//            cmocka_unit_test_setup_teardown(generate_random_data_test, clear_token_with_user_login_setup, after_test_cleanup),
-
-            /* Create and delete objects tests */
-//            cmocka_unit_test_setup_teardown(create_object_test, clear_token_with_user_login_setup, after_test_cleanup),
-//            cmocka_unit_test_setup_teardown(destroy_object_test, clear_token_with_user_login_and_import_keys_setup, after_test_cleanup),
-
-    };
     const struct CMUnitTest tests_without_initialization[] = {
             cmocka_unit_test(get_all_mechanisms_test),
             cmocka_unit_test(is_ec_supported_test),

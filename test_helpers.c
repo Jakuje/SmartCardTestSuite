@@ -471,9 +471,10 @@ int write_whole_file(CK_ULONG *data_length, CK_BYTE *input_buffer, char *file_pa
     return 0;
 }
 
+char id_buffer[11];
+
 const char *get_mechanism_name(int mech_id)
 {
-	char *out = malloc(11);
 	switch (mech_id) {
 		case CKM_RSA_PKCS:
 			return "CKM_RSA_PKCS";
@@ -488,14 +489,13 @@ const char *get_mechanism_name(int mech_id)
 		case CKM_ECDH1_COFACTOR_DERIVE:
 			return "CKM_ECDH1_COFACTOR_DERIVE";
 		default:
-			sprintf(out, "0x%.8X", mech_id);
-			return out;
+			sprintf(id_buffer, "0x%.8X", mech_id);
+			return id_buffer;
 	}
 }
 
 const char *get_mechanism_flag_name(int mech_id)
 {
-	char *out = malloc(11);
 	switch (mech_id) {
 		case CKF_HW:
 			return "CKF_HW";
@@ -534,7 +534,7 @@ const char *get_mechanism_flag_name(int mech_id)
 		case CKF_EC_COMPRESS:
 			return "CKF_EC_COMPRESS";
 		default:
-			sprintf(out, "0x%.8X", mech_id);
-			return out;
+			sprintf(id_buffer, "0x%.8X", mech_id);
+			return id_buffer;
 	}
 }
