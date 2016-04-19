@@ -891,9 +891,13 @@ char *convert_byte_string(unsigned char *id, unsigned long length)
 	return data;
 }
 
-#define VERIFY_PUBLIC	0x01
 #define VERIFY_SIGN		0x02
 #define VERIFY_DECRYPT	0x04
+
+typedef struct {
+	CK_MECHANISM_TYPE mech;
+	int flags;
+} test_mech_t;
 
 typedef struct {
 	char	*key_id;
@@ -913,7 +917,9 @@ typedef struct {
 	CK_KEY_TYPE	key_type;
 	char		*label;
 	CK_ULONG 	 bits;
-	int		 flags;
+	int			verify_public;
+	test_mech_t	*mechs;
+	int			num_mechs;
 } test_cert_t;
 
 typedef struct {
@@ -921,17 +927,17 @@ typedef struct {
 	test_cert_t *data;
 } test_certs_t;
 
-int encrypt_decrypt_test(test_cert_t *o, token_info_t *info)
+int encrypt_decrypt_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 {
     CK_RV rv;
-	// XXX different mechs based on key type
 	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
 	CK_ULONG message_length = strlen(message);
     CK_BYTE dec_message[BUFFER_SIZE];
 	CK_ULONG dec_message_length = BUFFER_SIZE;
 
-	if (o->type != EVP_PK_RSA) { // XXX non-RSA key?
+	sign_mechanism.mechanism = mech->mech;
+	if (o->type != EVP_PK_RSA) {
 		debug_print(" [ KEY %s ] Skip non-RSA key", o->id_str);
 		return 0;
 	}
@@ -972,7 +978,8 @@ int encrypt_decrypt_test(test_cert_t *o, token_info_t *info)
 	if (memcmp(dec_message, message, dec_message_length) == 0
 			&& dec_message_length == message_length) {
 		debug_print(" [ OK %s ] Text decrypted successfully.", o->id_str);
-		o->flags |= VERIFY_DECRYPT;
+		mech->flags |= VERIFY_DECRYPT;
+		// XXX only mechanism for decryption
 	} else {
 		debug_print(" [ ERROR %s ] Text decryption failed. Recovered text: %s",
 			o->id_str, dec_message);
@@ -981,26 +988,22 @@ int encrypt_decrypt_test(test_cert_t *o, token_info_t *info)
 	return 1;
 }
 
-int sign_verify_test(test_cert_t *o, token_info_t *info)
+int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 {
     CK_RV rv;
-	// XXX different mechs based on key type
 	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
 	CK_ULONG message_length = strlen(message);
     CK_BYTE *sign = NULL;
     CK_ULONG sign_length = 0;
 
-	/*sign_mechanism.mechanism = CKM_RSA_PKCS;
-	sign_mechanism.pParameter = NULL;
-	sign_mechanism.ulParameterLen = 0;*/
+	sign_mechanism.mechanism = mech->mech;
 	if (o->type == EVP_PK_EC) {
-		sign_mechanism.mechanism = CKM_ECDSA;
-		// opensc can take only 256 bits
+		// XXX opensc can take only 256 bits for CKM_ECDSA
 		message = "01234567890123456789012345678901";
 		message_length = strlen(message);
 	} else if (o->type != EVP_PK_RSA) { // XXX non-RSA key?
-		debug_print(" [ KEY %s ] Skip non-RSA key", o->id_str);
+		debug_print(" [ KEY %s ] Skip non-RSA non-EC key", o->id_str);
 		return 0;
 	}
 
@@ -1010,6 +1013,9 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 		o->private_handle);
 	if (rv == CKR_KEY_TYPE_INCONSISTENT) {
 		debug_print(" [ SKIP %s ] Not allowed to sign with this key?", o->id_str);
+		return 0;
+	} else if (rv == CKR_MECHANISM_INVALID) {
+		debug_print(" [ SKIP %s ] Bad mechanism. Not supported?", o->id_str);
 		return 0;
 	} else if (rv != CKR_OK)
 		fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
@@ -1046,7 +1052,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 		if (memcmp(dec_message, message, dec_message_length) == 0
 				&& dec_message_length == message_length) {
 			debug_print(" [ OK %s ] Signature is valid.", o->id_str);
-			o->flags |= VERIFY_SIGN;
+			mech->flags |= VERIFY_SIGN;
 		 } else {
 			debug_print(" [ ERROR %s ] Signature is not valid. Recovered text: %s",
 				o->id_str, dec_message);
@@ -1061,7 +1067,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info)
 		BN_bin2bn(&sign[nlen], nlen, sig->s);
 		if ((rv = ECDSA_do_verify(message, message_length, sig, o->key.ec)) == 1) {
 			debug_print(" [ OK %s ] EC Signature is valid.", o->id_str);
-			o->flags |= VERIFY_SIGN;
+			mech->flags |= VERIFY_SIGN;
 		} else {
 			fail_msg("ECDSA_do_verify: rv = %d: %s\n", rv,
 				ERR_error_string(ERR_peek_last_error(), NULL));
@@ -1186,7 +1192,8 @@ int callback_certificates(test_certs_t *objects,
 	o->label = malloc(template[2].ulValueLen + 1);
 	o->label = strndup(template[2].pValue, template[2].ulValueLen);
 	o->label[template[2].ulValueLen] = '\0';
-	o->flags = 0;
+	o->verify_public = 0;
+	o->mechs = NULL;
 	o->type = -1;
 	cp = template[1].pValue;
 	if ((o->x509 = X509_new()) == NULL) {
@@ -1201,11 +1208,24 @@ int callback_certificates(test_certs_t *objects,
 		if ((o->key.rsa = RSAPublicKey_dup(evp->pkey.rsa)) == NULL)
 			fail_msg("RSAPublicKey_dup failed");
 		o->type = EVP_PK_RSA;
+		o->bits = EVP_PKEY_bits(evp);
+
+		o->num_mechs = 1; // the only mechanism for RSA
+		o->mechs = malloc(sizeof(test_mech_t));
+		o->mechs[0].mech = CKM_RSA_PKCS;
+		o->mechs[0].flags = 0;
 	} else if (EVP_PKEY_base_id(evp) == EVP_PKEY_EC) {
 		if ((o->key.ec = EC_KEY_dup(evp->pkey.ec)) == NULL)
 			fail_msg("EC_KEY_dup failed");
 		o->type = EVP_PK_EC;
 		o->bits = EVP_PKEY_bits(evp);
+
+		o->num_mechs = 2; // we expect two of them, if supported XXX
+		o->mechs = malloc(2*sizeof(test_mech_t));
+		o->mechs[0].mech = CKM_ECDSA;
+		o->mechs[0].flags = 0;
+		o->mechs[1].mech = CKM_ECDSA_SHA1;
+		o->mechs[1].flags = 0;
 	} else {
 		fprintf(stderr, "[ WARN %s ]evp->type =  0x%.4X (not RSA, EC)\n", o->id_str, evp->type);
 	}
@@ -1269,7 +1289,7 @@ int callback_public_keys(test_certs_t *objects,
 		free(key_id);
 		return -1;
 	}
-	if (objects->data[i].flags & VERIFY_PUBLIC != 0) {
+	if (objects->data[i].verify_public != 0) {
     	fprintf(stderr, "Object already filled? ID %s\n", key_id);
 		free(key_id);
 		return -1;
@@ -1295,7 +1315,7 @@ int callback_public_keys(test_certs_t *objects,
 			return -1;
 		}
 		RSA_free(rsa);
-		objects->data[i].flags |= VERIFY_PUBLIC;
+		objects->data[i].verify_public = 1;
 	} else if (objects->data[i].key_type == CKK_EC) {
 		fprintf(stderr, " [ WARN %s] EC key skipped so far\n", objects->data[i].id_str);
 
@@ -1375,7 +1395,7 @@ static void supported_mechanisms_test(void **state) {
     }
 }
 
-static void readonly_tests(void **state) {
+static void sign_verify_tests(void **state) {
 
     token_info_t *info = (token_info_t *) *state;
 
@@ -1453,10 +1473,14 @@ static void readonly_tests(void **state) {
 		used = 0;
 		/* do the Sign&Verify and/or Encrypt&Decrypt */
 		if (objects.data[i].sign && objects.data[i].verify)
-			used |= sign_verify_test(&(objects.data[i]), info);
+			for (int j = 0; j < objects.data[i].num_mechs; j++)
+				used |= sign_verify_test(&(objects.data[i]), info,
+					&(objects.data[i].mechs[j]));
 
 		if (objects.data[i].encrypt && objects.data[i].decrypt)
-			used |= encrypt_decrypt_test(&(objects.data[i]), info);
+			for (int j = 0; j < objects.data[i].num_mechs; j++)
+				used |= encrypt_decrypt_test(&(objects.data[i]), info,
+					&(objects.data[i].mechs[j]));
 
 		if (!used) {
 			debug_print(" [ WARN %s ] Private key with unknown purpose T:%02X",
@@ -1467,24 +1491,28 @@ static void readonly_tests(void **state) {
 	/* print summary */
 	printf("[KEY ID] [TYPE] [SIZE] [PUBLIC] [SIGN&VERIFY] [ENC&DECRYPT] [LABEL]\n");
 	for (int i = 0; i < objects.count; i++) {
-		printf("[%-6s] [%s] [%-4d] [ %s ] [%s%s%s] [%s%s%s] [%s]\n",
-		objects.data[i].id_str,
-		objects.data[i].key_type == CKK_RSA ? "RSA " :
-			objects.data[i].key_type == CKK_EC ? " EC " : " ?? ",
-		objects.data[i].bits != -1 ? objects.data[i].bits : 0,
-		objects.data[i].flags & VERIFY_PUBLIC ? " ./ " : "FAIL",
-		objects.data[i].sign ? "./]" : "  ]",
-		objects.data[i].verify ? "[./]" : "[  ]",
-		objects.data[i].flags & VERIFY_SIGN ? " ./ " : "SKIP",
-		objects.data[i].encrypt ? "./]" : "  ]",
-		objects.data[i].decrypt ? "[./]" : "[  ]",
-		objects.data[i].flags & VERIFY_DECRYPT ? " ./ " : "SKIP",
-		objects.data[i].label);
+		printf("[%-6s] [%s] [%4d] [ %s ] [%s%s] [%s%s] [%s]\n",
+			objects.data[i].id_str,
+			objects.data[i].key_type == CKK_RSA ? "RSA " :
+				objects.data[i].key_type == CKK_EC ? " EC " : " ?? ",
+			objects.data[i].bits != -1 ? objects.data[i].bits : 0,
+			objects.data[i].verify_public == 1 ? " ./ " : "FAIL",
+			objects.data[i].sign ? "[./] " : "[  ] ",
+			objects.data[i].verify ? " [./] " : " [  ] ",
+			objects.data[i].encrypt ? "[./] " : "[  ] ",
+			objects.data[i].decrypt ? " [./] " : " [  ] ",
+			objects.data[i].label);
+		for (int j = 0; j < objects.data[i].num_mechs; j++)
+			printf("         [ %-18s ] [   %s    ] [   %s    ]\n",
+				get_mechanism_name(objects.data[i].mechs[j].mech),
+				objects.data[i].mechs[j].flags & VERIFY_SIGN ? "[./]" : "    ",
+				objects.data[i].mechs[j].flags & VERIFY_DECRYPT ? "[./]" : "    ");
+		printf("\n");
 	}
-	printf(" Public == Cert ----------^      ^   ^   ^     ^   ^   ^\n");
-	printf(" Sign Attribute -----------------'   |   |     |   |   '-- Enc&Dec functionality\n");
-	printf(" Verify Attribute -------------------'   |     |   '------ Decrypt Attribute\n");
-	printf(" Sign&Verify functionality --------------'     '---------- Encrypt functionaliy\n");
+	printf(" Public == Cert ----------^       ^  ^  ^       ^  ^  ^\n");
+	printf(" Sign Attribute ------------------'  |  |       |  |  '---- Decrypt Attribute\n");
+	printf(" Sign&Verify functionality ----------'  |       |  '------- Enc&Dec functionality\n");
+	printf(" Verify Attribute ----------------------'       '---------- Encrypt functionaliy\n");
 
     debug_print("The functionallity of the keys on the card was verified");
 }
@@ -1553,7 +1581,8 @@ int main(int argc, char** argv) {
             cmocka_unit_test(supported_mechanisms_test),
 
 			/* Complex readonly test of all objects on the card  */
-            cmocka_unit_test_setup_teardown(readonly_tests,clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(sign_verify_tests,
+				clear_token_with_user_login_setup, after_test_cleanup),
 			};
     const struct CMUnitTest readonly_tests_without_initialization_others[] = {
 

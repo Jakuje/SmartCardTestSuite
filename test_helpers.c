@@ -477,12 +477,16 @@ const char *get_mechanism_name(int mech_id)
 	switch (mech_id) {
 		case CKM_RSA_PKCS:
 			return "CKM_RSA_PKCS";
+		case CKM_RSA_X_509:
+			return "CKM_RSA_X_509";
 		case CKM_ECDSA:
 			return "CKM_ECDSA";
 		case CKM_ECDSA_SHA1:
 			return "CKM_ECDSA_SHA1";
 		case CKM_ECDH1_DERIVE:
 			return "CKM_ECDH1_DERIVE";
+		case CKM_ECDH1_COFACTOR_DERIVE:
+			return "CKM_ECDH1_COFACTOR_DERIVE";
 		default:
 			sprintf(out, "0x%.8X", mech_id);
 			return out;
