@@ -1318,6 +1318,63 @@ int callback_public_keys(test_certs_t *objects,
 		objects->data[i].key_type);
 }
 
+static void supported_mechanisms_test(void **state) {
+    token_info_t *info = (token_info_t *) *state;
+    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
+
+    CK_RV rv;
+    CK_LONG mechanism_count;
+    CK_MECHANISM_TYPE_PTR mechanism_list;
+    CK_MECHANISM_INFO_PTR mechanism_info;
+
+    if(initialize_cryptoki(info)) {
+        fail_msg("CRYPTOKI couldn't be initialized\n");
+    }
+
+    rv = function_pointer->C_GetMechanismList(info->slot_id, NULL_PTR, &mechanism_count);
+    assert_int_not_equal(mechanism_count,0);
+    if ((rv == CKR_OK) && (mechanism_count > 0)) {
+        mechanism_list = (CK_MECHANISM_TYPE_PTR) malloc(mechanism_count * sizeof(CK_MECHANISM_TYPE));
+        rv = function_pointer->C_GetMechanismList(info->slot_id, mechanism_list, &mechanism_count);
+        if (rv != CKR_OK) {
+            free(mechanism_list);
+            function_pointer->C_Finalize(NULL_PTR);
+            fail_msg("Could not get mechanism list!\n");
+        }
+        assert_non_null(mechanism_list);
+
+        mechanism_info = (CK_MECHANISM_INFO_PTR) malloc(mechanism_count * sizeof(CK_MECHANISM_INFO));
+
+        for(int i=0; i< mechanism_count; i++) {
+            CK_MECHANISM_TYPE mechanism_type = mechanism_list[i];
+            rv = function_pointer->C_GetMechanismInfo(info->slot_id,
+				mechanism_type, &mechanism_info[i]);
+
+            if(rv != CKR_OK){
+                continue;
+            }
+        }
+
+		printf("[    MECHANISM    ] [ KEY SIZE ] [  FLAGS   ]\n");
+		printf("[                 ] [ MIN][ MAX] [          ]\n");
+        for(int i = 0; i < mechanism_count; i++) {
+			printf("[%-17s] [%4lu][%4lu] [%10s]", get_mechanism_name(mechanism_list[i]),
+				mechanism_info[i].ulMinKeySize, mechanism_info[i].ulMaxKeySize,
+				get_mechanism_flag_name(mechanism_info[i].flags));
+			for (CK_FLAGS j = 1; j <= CKF_EC_COMPRESS; j = j<<1)
+				if ((mechanism_info[i].flags & j) != 0)
+					printf(" %s", get_mechanism_flag_name(j));
+			printf("\n");
+		}
+        free(mechanism_list);
+    }
+
+    rv = function_pointer->C_Finalize(NULL_PTR);
+    if(rv != CKR_OK){
+        fail_msg("Could not finalize CRYPTOKI!\n");
+    }
+}
+
 static void readonly_tests(void **state) {
 
     token_info_t *info = (token_info_t *) *state;
@@ -1493,11 +1550,10 @@ int main(int argc, char** argv) {
            card_info.pin, card_info.change_pin, card_info.pin_length, card_info.id[0], card_info.id_length);
 
     const struct CMUnitTest readonly_tests_without_initialization[] = {
-            cmocka_unit_test(get_all_mechanisms_test),
-            cmocka_unit_test(is_ec_supported_test),
+            cmocka_unit_test(supported_mechanisms_test),
 
 			/* Complex readonly test of all objects on the card  */
-            cmocka_unit_test_setup_teardown(readonly_tests, clear_token_with_user_login_setup, after_test_cleanup),
+            cmocka_unit_test_setup_teardown(readonly_tests,clear_token_with_user_login_setup, after_test_cleanup),
 			};
     const struct CMUnitTest readonly_tests_without_initialization_others[] = {
 
