@@ -6,6 +6,7 @@ void display_usage() {
                     "    ./SmartCardTestSuite -m module_path -t [PKCS15, PIV] [-s so_pin]\n"
                     "       -m  module_path:   path to tested module (e.g. /usr/lib64/opensc-pkcs11.so)\n"
                     "       -s  so_pin:        Security Officer PIN to token\n"
+                    "       -p  pin:           Application PIN\n"
                     "       -t  card_type:     card type, supported are PKCS15 and PIV\n"
                     "       -r:                run readonly tests (does not clear the card)\n"
                     "\n");
