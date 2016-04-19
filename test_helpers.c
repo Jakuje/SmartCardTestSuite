@@ -18,13 +18,14 @@ int open_session(token_info_t *info) {
 }
 
 int clear_token() {
-    debug_print("Clearing token");
 
     int error = 0;
 
     if (readonly)
         //skip();
         return 0;
+
+    debug_print("Clearing token");
 
     if (card_info.type == PIV) {
         system("yubico-piv-tool -a verify-pin -P 4711 > /dev/null 2>&1");
