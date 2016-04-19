@@ -33,4 +33,7 @@ int find_object_by_template(const token_info_t * info, CK_ATTRIBUTE *template, C
 int read_whole_file(CK_ULONG *data_length, CK_BYTE **input_buffer, char *file_path);
 int write_whole_file(CK_ULONG *data_length, CK_BYTE *input_buffer, char *file_path);
 
+const char *get_mechanism_name(int mech_id);
+const char *get_mechanism_flag_name(int flag_id);
+
 #endif //SMARTCARDTESTSUIT_TEST_HELPERS_H

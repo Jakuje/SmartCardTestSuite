@@ -470,3 +470,67 @@ int write_whole_file(CK_ULONG *data_length, CK_BYTE *input_buffer, char *file_pa
 
     return 0;
 }
+
+const char *get_mechanism_name(int mech_id)
+{
+	char *out = malloc(11);
+	switch (mech_id) {
+		case CKM_RSA_PKCS:
+			return "CKM_RSA_PKCS";
+		case CKM_ECDSA:
+			return "CKM_ECDSA";
+		case CKM_ECDSA_SHA1:
+			return "CKM_ECDSA_SHA1";
+		case CKM_ECDH1_DERIVE:
+			return "CKM_ECDH1_DERIVE";
+		default:
+			sprintf(out, "0x%.8X", mech_id);
+			return out;
+	}
+}
+
+const char *get_mechanism_flag_name(int mech_id)
+{
+	char *out = malloc(11);
+	switch (mech_id) {
+		case CKF_HW:
+			return "CKF_HW";
+		case CKF_ENCRYPT:
+			return "CKF_ENCRYPT";
+		case CKF_DECRYPT:
+			return "CKF_DECRYPT";
+		case CKF_DIGEST:
+			return "CKF_DIGEST";
+		case CKF_SIGN:
+			return "CKF_SIGN";
+		case CKF_SIGN_RECOVER:
+			return "CKF_SIGN_RECOVER";
+		case CKF_VERIFY:
+			return "CKF_VERIFY";
+		case CKF_VERIFY_RECOVER:
+			return "CKF_VERIFY_RECOVER";
+		case CKF_GENERATE:
+			return "CKF_GENERATE";
+		case CKF_GENERATE_KEY_PAIR:
+			return "CKF_GENERATE_KEY_PAIR";
+		case CKF_WRAP:
+			return "CKF_WRAP";
+		case CKF_UNWRAP:
+			return "CKF_UNWRAP";
+		case CKF_DERIVE:
+			return "CKF_DERIVE";
+		case CKF_EC_F_P:
+			return "CKF_EC_F_P";
+		case CKF_EC_F_2M:
+			return "CKF_EC_F_2M";
+		case CKF_EC_NAMEDCURVE:
+			return "CKF_EC_NAMEDCURVE";
+		case CKF_EC_UNCOMPRESS:
+			return "CKF_EC_UNCOMPRESS";
+		case CKF_EC_COMPRESS:
+			return "CKF_EC_COMPRESS";
+		default:
+			sprintf(out, "0x%.8X", mech_id);
+			return out;
+	}
+}
