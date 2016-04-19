@@ -1205,6 +1205,7 @@ int callback_certificates(test_certs_t *objects,
 		if ((o->key.ec = EC_KEY_dup(evp->pkey.ec)) == NULL)
 			fail_msg("EC_KEY_dup failed");
 		o->type = EVP_PK_EC;
+		o->bits = EVP_PKEY_bits(evp);
 	} else {
 		fprintf(stderr, "[ WARN %s ]evp->type =  0x%.4X (not RSA, EC)\n", o->id_str, evp->type);
 	}
@@ -1268,7 +1269,7 @@ int callback_public_keys(test_certs_t *objects,
 		free(key_id);
 		return -1;
 	}
-	if (objects->data[i].bits != -1) {
+	if (objects->data[i].flags & VERIFY_PUBLIC != 0) {
     	fprintf(stderr, "Object already filled? ID %s\n", key_id);
 		free(key_id);
 		return -1;
@@ -1297,13 +1298,14 @@ int callback_public_keys(test_certs_t *objects,
 		objects->data[i].flags |= VERIFY_PUBLIC;
 	} else if (objects->data[i].key_type == CKK_EC) {
 		fprintf(stderr, " [ WARN %s] EC key skipped so far\n", objects->data[i].id_str);
+
 		EC_KEY *ec = EC_KEY_new();
 		int nid = NID_X9_62_prime256v1; /* 0x11 */
 		//int nid =  NID_secp384r1;		/* 0x14 */
 		EC_GROUP *ecgroup = EC_GROUP_new_by_curve_name(nid);
 		EC_GROUP_set_asn1_flag(ecgroup, OPENSSL_EC_NAMED_CURVE);
 		EC_POINT *ecpoint = EC_POINT_new(ecgroup);
-		
+
 		EC_KEY_set_public_key(ec, ecpoint);
 		return -1;
 	} else {
