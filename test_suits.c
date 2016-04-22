@@ -1226,7 +1226,7 @@ int callback_certificates(test_certs_t *objects,
 		o->type = EVP_PK_EC;
 		o->bits = EVP_PKEY_bits(evp);
 
-		o->num_mechs = 2; // we expect two of them, if supported XXX
+		o->num_mechs = 1; // XXX CKM_ECDSA_SHA1 is not supported on Test PIV cards
 		o->mechs = malloc(2*sizeof(test_mech_t));
 		if (o->mechs == NULL)
 			fail_msg("malloc failed for mechs");
