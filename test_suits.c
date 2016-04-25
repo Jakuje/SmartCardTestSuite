@@ -990,26 +990,25 @@ int encrypt_decrypt_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 	return 1;
 }
 
-int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
+int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech,
+	CK_ULONG message_length)
 {
     CK_RV rv;
 	CK_MECHANISM sign_mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	CK_BYTE *message = (CK_BYTE *)SHORT_MESSAGE_TO_SIGN;
-	CK_ULONG message_length = strlen(message);
     CK_BYTE *sign = NULL;
     CK_ULONG sign_length = 0;
 
+	if (message_length > strlen(message))
+		fail_msg("Truncate is longer than the actuall message");
+
 	sign_mechanism.mechanism = mech->mech;
-	if (o->type == EVP_PK_EC) {
-		// XXX opensc can take only 256 bits for CKM_ECDSA
-		message = "01234567890123456789012345678901";
-		message_length = strlen(message);
-	} else if (o->type != EVP_PK_RSA) {
-		debug_print(" [ KEY %s ] Skip non-RSA non-EC key", o->id_str);
+	if (o->type != EVP_PK_EC && o->type != EVP_PK_RSA) {
+		debug_print(" [ KEY %s ] Skip non-RSA and non-EC key", o->id_str);
 		return 0;
 	}
 
-	debug_print(" [ KEY %s ] Signing message", o->id_str);
+	debug_print(" [ KEY %s ] Signing message of length %d", o->id_str, message_length);
 
 	rv = info->function_pointer->C_SignInit(info->session_handle, &sign_mechanism,
 		o->private_handle);
@@ -1073,7 +1072,8 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 		BN_bin2bn(&sign[nlen], nlen, sig->s);
 		free(sign);
 		if ((rv = ECDSA_do_verify(message, message_length, sig, o->key.ec)) == 1) {
-			debug_print(" [ OK %s ] EC Signature is valid.", o->id_str);
+			debug_print(" [ OK %s ] EC Signature of length %d is valid.",
+				o->id_str, message_length);
 			mech->flags |= VERIFY_SIGN;
 		} else {
 			fail_msg("ECDSA_do_verify: rv = %d: %s\n", rv,
@@ -1347,22 +1347,13 @@ int callback_public_keys(test_certs_t *objects,
 		objects->data[i].key_type);
 }
 
-static void sign_verify_tests(void **state) {
-
-    token_info_t *info = (token_info_t *) *state;
-
-    CK_RV rv;
-    CK_FUNCTION_LIST_PTR function_pointer = info->function_pointer;
-    CK_ULONG object_count;
-
+static void search_for_all_objects(test_certs_t *objects, token_info_t *info) {
     CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
     CK_OBJECT_CLASS privateClass = CKO_PRIVATE_KEY;
     CK_OBJECT_CLASS publicClass = CKO_PUBLIC_KEY;
     CK_ATTRIBUTE filter[] = {
             {CKA_CLASS, &keyClass, sizeof(keyClass)},
-            {CKA_ID, NULL, 0},
     };
-	CK_LONG attributes_count = sizeof(filter) / sizeof(CK_ATTRIBUTE);
 	CK_ATTRIBUTE attrs[] = {
 			{ CKA_ID, NULL_PTR, 0},
 			{ CKA_VALUE, NULL_PTR, 0},
@@ -1396,14 +1387,8 @@ static void sign_verify_tests(void **state) {
 	};
 	CK_ULONG public_attrs_size = sizeof (public_attrs) / sizeof (CK_ATTRIBUTE);
 
-    CK_OBJECT_HANDLE object_handle = CK_INVALID_HANDLE;
-
-	test_certs_t objects;
-	objects.count = 0;
-	objects.data = NULL;
-
     debug_print("\nSearch for all certificates on the card");
-	search_objects(&objects, info, filter, 1,
+	search_objects(objects, info, filter, 1, // XXX size = 1
 		attrs, attrs_size, callback_certificates);
 
 
@@ -1411,25 +1396,52 @@ static void sign_verify_tests(void **state) {
     debug_print("\nSearch for all private keys respective to the certificates");
 	filter[0].pValue = &privateClass;
 	// search for all and pair on the fly
-	search_objects(&objects, info, filter, 1,
+	search_objects(objects, info, filter, 1,
 		private_attrs, private_attrs_size, callback_private_keys);
 
     debug_print("\nSearch for all public keys respective to the certificates");
 	filter[0].pValue = &publicClass;
-	search_objects(&objects, info, filter, 1,
+	search_objects(objects, info, filter, 1,
 		public_attrs, public_attrs_size, callback_public_keys);
+}
+
+static void clean_all_objects(test_certs_t *objects) {
+	for (int i = 0; i < objects->count; i++) {
+		free(objects->data[i].key_id);
+		free(objects->data[i].id_str);
+		free(objects->data[i].label);
+		free(objects->data[i].mechs);
+		X509_free(objects->data[i].x509);
+		if (objects->data[i].key_type == CKK_RSA)
+			RSA_free(objects->data[i].key.rsa);
+		else
+			EC_KEY_free(objects->data[i].key.ec);
+	}
+	free(objects->data);
+}
+
+static void readonly_tests(void **state) {
+
+    token_info_t *info = (token_info_t *) *state;
+
+	test_certs_t objects;
+	objects.count = 0;
+	objects.data = NULL;
+
+	search_for_all_objects(&objects, info);
 
 	int used;
     debug_print("\nCheck functionality of Sign&Verify and/or Encrypt&Decrypt");
 	for (int i = 0; i < objects.count; i++) {
 		used = 0;
 		/* do the Sign&Verify and/or Encrypt&Decrypt */
-		if (objects.data[i].sign && objects.data[i].verify)
+		/* XXX some keys do not have appropriate flags, but we can use them */
+		//if (objects.data[i].sign && objects.data[i].verify)
 			for (int j = 0; j < objects.data[i].num_mechs; j++)
 				used |= sign_verify_test(&(objects.data[i]), info,
-					&(objects.data[i].mechs[j]));
+					&(objects.data[i].mechs[j]), 32);
 
-		if (objects.data[i].encrypt && objects.data[i].decrypt)
+		//if (objects.data[i].encrypt && objects.data[i].decrypt)
 			for (int j = 0; j < objects.data[i].num_mechs; j++)
 				used |= encrypt_decrypt_test(&(objects.data[i]), info,
 					&(objects.data[i].mechs[j]));
@@ -1466,18 +1478,29 @@ static void sign_verify_tests(void **state) {
 	printf(" Sign&Verify functionality ----------'  |       |  '------- Enc&Dec functionality\n");
 	printf(" Verify Attribute ----------------------'       '---------- Encrypt functionaliy\n");
 
+	clean_all_objects(&objects);
+}
+
+static void ec_sign_size_test(void **state) {
+
+    token_info_t *info = (token_info_t *) *state;
+
+	test_certs_t objects;
+	objects.count = 0;
+	objects.data = NULL;
+
+	search_for_all_objects(&objects, info);
+
+    debug_print("\nCheck functionality of Sign&Verify and/or Encrypt&Decrypt");
 	for (int i = 0; i < objects.count; i++) {
-		free(objects.data[i].key_id);
-		free(objects.data[i].id_str);
-		free(objects.data[i].label);
-		free(objects.data[i].mechs);
-		X509_free(objects.data[i].x509);
-		if (objects.data[i].key_type == CKK_RSA)
-			RSA_free(objects.data[i].key.rsa);
-		else
-			EC_KEY_free(objects.data[i].key.ec);
+		if (objects.data[i].key_type == CKK_EC)
+			// for (int j = 0; j < objects.data[i].num_mechs; j++) // XXX single mechanism
+			for (int l = 30; l < 35; l++)
+				sign_verify_test(&(objects.data[i]), info,
+					&(objects.data[i].mechs[0]), l);
 	}
-	free(objects.data);
+
+	clean_all_objects(&objects);
 }
 
 static void supported_mechanisms_test(void **state) {
@@ -1601,8 +1624,12 @@ int main(int argc, char** argv) {
     const struct CMUnitTest readonly_tests_without_initialization[] = {
             cmocka_unit_test(supported_mechanisms_test),
 
+			/* Regression test Sign&Verify with various data lengths */
+            cmocka_unit_test_setup_teardown(ec_sign_size_test,
+				clear_token_with_user_login_setup, after_test_cleanup),
+
 			/* Complex readonly test of all objects on the card  */
-            cmocka_unit_test_setup_teardown(sign_verify_tests,
+            cmocka_unit_test_setup_teardown(readonly_tests,
 				clear_token_with_user_login_setup, after_test_cleanup),
 			};
     const struct CMUnitTest tests_without_initialization[] = {
