@@ -941,7 +941,7 @@ int encrypt_decrypt_test(test_cert_t *o, token_info_t *info, test_mech_t *mech)
 
 	sign_mechanism.mechanism = mech->mech;
 	if (o->type != EVP_PK_RSA) {
-		debug_print(" [ KEY %s ] Skip non-RSA key", o->id_str);
+		debug_print(" [ KEY %s ] Skip non-RSA key for encryption", o->id_str);
 		return 0;
 	}
 
