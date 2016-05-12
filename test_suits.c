@@ -918,6 +918,7 @@ typedef struct {
 	CK_BBOOL	verify;
 	CK_BBOOL	encrypt;
 	CK_KEY_TYPE	key_type;
+	CK_BBOOL	always_auth;
 	char		*label;
 	CK_ULONG 	 bits;
 	int			verify_public;
@@ -1021,6 +1022,14 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech,
 	} else if (rv != CKR_OK)
 		fail_msg("C_SignInit: rv = 0x%.8X\n", rv);
 
+	if (o->always_auth) {
+	    rv = info->function_pointer->C_Login(info->session_handle,
+			CKU_CONTEXT_SPECIFIC, card_info.pin, card_info.pin_length);
+	    if (rv != CKR_OK) {
+			debug_print(" [ SKIP %s ] Re-authentication failed", o->id_str);
+	    }
+	}
+
 	/* Call C_Sign with NULL argument to find out the real size of signature */
 	rv = info->function_pointer->C_Sign(info->session_handle,
 		message, message_length, sign, &sign_length);
@@ -1034,11 +1043,7 @@ int sign_verify_test(test_cert_t *o, token_info_t *info, test_mech_t *mech,
 	/* Call C_Sign with allocated buffer to the the actual signature */
 	rv = info->function_pointer->C_Sign(info->session_handle,
 		message, message_length, sign, &sign_length);
-	if (rv == CKR_USER_NOT_LOGGED_IN) {
-		debug_print(" [ SKIP %s ] Not allowed to sign with this key?", o->id_str);
-		free(sign);
-		return 0;
-	} else if (rv != CKR_OK) {
+	if (rv != CKR_OK) {
 		free(sign);
 		fail_msg("C_Sign: rv = 0x%.8X\n", rv);
 	}
@@ -1192,6 +1197,7 @@ int callback_certificates(test_certs_t *objects,
 	o->key_id_size = template[0].ulValueLen;
 	o->id_str = convert_byte_string(o->key_id, o->key_id_size);
 	o->private_handle = CK_INVALID_HANDLE;
+	o->always_auth = 0;
 	o->bits = -1;
 	o->label = malloc(template[2].ulValueLen + 1);
 	strncpy(o->label, template[2].pValue, template[2].ulValueLen);
@@ -1269,12 +1275,14 @@ int callback_private_keys(test_certs_t *objects,
 	free(key_id);
 
 	objects->data[i].private_handle = object_handle;
-	objects->data[i].sign = (template[0].ulValueLen != (CK_ULONG) -1)
+	objects->data[i].sign = (template[0].ulValueLen != (CK_BBOOL) -1)
 		? *((CK_BBOOL *) template[0].pValue) : CK_FALSE;
-	objects->data[i].decrypt = (template[1].ulValueLen != (CK_ULONG) -1)
+	objects->data[i].decrypt = (template[1].ulValueLen != (CK_BBOOL) -1)
 		? *((CK_BBOOL *) template[1].pValue) : CK_FALSE;
 	objects->data[i].key_type = (template[2].ulValueLen != (CK_ULONG) -1)
 		? *((CK_KEY_TYPE *) template[2].pValue) : -1;
+	objects->data[i].always_auth = (template[2].ulValueLen != (CK_BBOOL) -1)
+		? *((CK_BBOOL *) template[2].pValue) : CK_FALSE;
 
 	debug_print(" [ OK %s ] Private key to the certificate found successfully S:%d D:%d T:%02X",
 		objects->data[i].id_str, objects->data[i].sign, objects->data[i].decrypt,
@@ -1326,7 +1334,8 @@ int callback_public_keys(test_certs_t *objects,
 		RSA_free(rsa);
 		objects->data[i].verify_public = 1;
 	} else if (objects->data[i].key_type == CKK_EC) {
-		fprintf(stderr, " [ WARN %s] EC key skipped so far\n", objects->data[i].id_str);
+		fprintf(stderr, " [ WARN %s] EC public key check skipped so far\n",
+			objects->data[i].id_str);
 
 		EC_KEY *ec = EC_KEY_new();
 		int nid = NID_X9_62_prime256v1; /* 0x11 */
@@ -1372,6 +1381,7 @@ static void search_for_all_objects(test_certs_t *objects, token_info_t *info) {
             { CKA_DECRYPT, NULL, 0}, // CK_BBOOL
             { CKA_KEY_TYPE, NULL, 0}, // CKK_
 			{ CKA_ID, NULL, 0},
+			{ CKA_ALWAYS_AUTHENTICATE, NULL, 0}, // CK_BBOOL
 	};
 	CK_ULONG private_attrs_size = sizeof (private_attrs) / sizeof (CK_ATTRIBUTE);
 	CK_ATTRIBUTE public_attrs[] = {
@@ -1460,7 +1470,7 @@ static void readonly_tests(void **state) {
 			objects.data[i].key_type == CKK_RSA ? "RSA " :
 				objects.data[i].key_type == CKK_EC ? " EC " : " ?? ",
 			objects.data[i].bits != -1 ? objects.data[i].bits : 0,
-			objects.data[i].verify_public == 1 ? " ./ " : "FAIL",
+			objects.data[i].verify_public == 1 ? " ./ " : "    ",
 			objects.data[i].sign ? "[./] " : "[  ] ",
 			objects.data[i].verify ? " [./] " : " [  ] ",
 			objects.data[i].encrypt ? "[./] " : "[  ] ",
